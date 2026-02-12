@@ -3,7 +3,60 @@ import os
 from groq import Groq
 import asyncio
 import edge_tts
+import pandas as pd
+from datetime import datetime
+import json
 import base64
+
+def registra_simulazione(nome, scenario, punteggio, margine):
+    file_nome = "storico_performance.csv"
+    nuova_riga = {
+        "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "Farmacista": nome,
+        "Scenario": scenario,
+        "Punteggio": punteggio,
+        "Margine_Potenziale": margine
+    }
+    try:
+        df = pd.read_csv(file_nome)
+        df = pd.concat([df, pd.DataFrame([nuova_riga])], ignore_index=True)
+    except FileNotFoundError:
+        df = pd.DataFrame([nuova_riga])
+    df.to_csv(file_nome, index=False)
+
+def check_password():
+    """Ritorna True se l'utente è autorizzato"""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+
+    if st.session_state.password_correct:
+        return True
+
+    # Interfaccia grafica del Login
+    st.set_page_config(page_title="PharmaFlow AI - Login", page_icon="🔒")
+    
+    st.title("🛡️ Accesso PharmaFlow AI")
+    st.markdown("Inserisci le tue credenziali per iniziare l'allenamento.")
+    
+    with st.container():
+        nome_utente = st.text_input("Nome e Cognome del Farmacista:")
+        password = st.text_input("Password di Accesso:", type="password")
+        
+        if st.button("Accedi al Sistema"):
+            # Controlliamo la password nei secrets
+            if password == st.secrets["APP_PASSWORD"] and nome_utente.strip() != "":
+                st.session_state.password_correct = True
+                st.session_state.user_name = nome_utente.strip()
+                st.rerun()
+            elif nome_utente.strip() == "":
+                st.warning("Per favore, inserisci il tuo nome.")
+            else:
+                st.error("Password errata o non autorizzata.")
+    return False
+
+# ESECUZIONE DEL BLOCCO LOGIN
+if not check_password():
+    st.stop() # Blocca il resto dell'app finché non si è loggati
 
 # --- CONFIGURAZIONE ---
 try:
@@ -126,36 +179,35 @@ if user_input:
 if len(st.session_state.messages) > 2:
     st.divider()
     if st.button("🏁 VALUTA LA MIA VENDITA"):
+    if len(st.session_state.messages) < 2:
+        st.warning("La conversazione è troppo breve per essere valutata.")
+    else:
         with st.spinner("Il Coach sta analizzando la tua performance..."):
             
-            # Creiamo il testo della conversazione
+            # 1. Prepariamo il testo della conversazione
             chat_text = ""
             for msg in st.session_state.messages:
                 chat_text += f"{msg['role'].upper()}: {msg['content']}\n"
             
-            # Prompt Dinamico: Il giudice sa quale scenario stavi giocando
+            # 2. Prompt del Giudice (Aggiornato per includere il Margine)
             judge_prompt = f"""
             Sei un Direttore Commerciale Farmaceutico.
             SCENARIO ATTIVO: {current_scenario['sintomo']}
-            CLIENTE: {current_scenario['persona']}
-            OBIETTIVO DI VENDITA (KPI): {current_scenario['obiettivo_vendita']}
+            OBIETTIVO DI VENDITA: {current_scenario['obiettivo_vendita']}
             
-            Analizza la seguente trascrizione della vendita.
+            Analizza la vendita e calcola il punteggio.
             
-            CRITERI DI VALUTAZIONE:
-            1. PROTOCOLLO: Ha proposto TUTTI i prodotti dell'Obiettivo? (Sì/No)
-            2. CROSS-SELLING: Ha spiegato il legame tra i prodotti?
-            3. CHIUSURA: Ha chiesto esplicitamente l'acquisto?
-            
-            Output richiesto (JSON):
+            Output richiesto (JSON STRETTO):
             {{
-              "score": (voto 0-100),
-              "feedback": "Commento tagliente su cosa manca.",
-              "consiglio": "Frase esatta da usare la prossima volta."
+              "score": (0-100),
+              "margine_euro": (stima il guadagno extra tra 5 e 30 se ha fatto cross-selling, altrimenti 0),
+              "feedback": "Commento tagliente.",
+              "consiglio": "Frase da usare."
             }}
             """
             
             try:
+                # 3. Chiamata all'AI
                 completion = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[
@@ -165,7 +217,33 @@ if len(st.session_state.messages) > 2:
                     temperature=0.2
                 )
                 analysis = completion.choices[0].message.content
-                st.success("Analisi Completata")
-                st.info(analysis)
+                
+                # 4. Estrazione Dati dal JSON dell'AI
+                # Pulizia per evitare che l'AI scriva testo inutile fuori dal JSON
+                start_index = analysis.find('{')
+                end_index = analysis.rfind('}') + 1
+                json_str = analysis[start_index:end_index]
+                res = json.loads(json_str)
+                
+                # 5. Visualizzazione Risultati
+                st.success(f"Analisi Completata per {st.session_state.user_name}")
+                col1, col2 = st.columns(2)
+                col1.metric("Punteggio", f"{res['score']}/100")
+                col2.metric("Margine Recuperato", f"€ {res['margine_euro']}")
+                
+                st.info(f"**Feedback:** {res['feedback']}")
+                st.write(f"💡 **Consiglio:** {res['consiglio']}")
+
+                # 6. SALVATAGGIO NEL DATABASE CSV
+                registra_simulazione(
+                    st.session_state.user_name,
+                    scenario_name,
+                    res['score'],
+                    res['margine_euro']
+                )
+                st.toast("Dati salvati nella Dashboard!")
+
             except Exception as e:
-                st.error(f"Errore Analisi: {e}")
+                st.error(f"Errore durante l'analisi o il salvataggio: {e}")
+                # In caso di errore nel JSON, mostriamo comunque la risposta grezza
+                st.code(analysis)
