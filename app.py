@@ -105,7 +105,7 @@ if user_input:
             with st.chat_message("assistant"):
                 st.write(ai_response)
                 # Mostra il player audio sotto il testo
-                s# --- LOGICA AUDIO AUTOPLAY ---
+                # --- LOGICA AUDIO AUTOPLAY ---
             with open("response.mp3", "rb") as f:
                 data = f.read()
                 b64 = base64.b64encode(data).decode()
