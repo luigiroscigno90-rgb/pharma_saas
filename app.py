@@ -102,20 +102,50 @@ if user_input:
             st.error(f"Errore AI: {e}")
 
 # --- IL GIUDICE (ANALISI) ---
+# Mostra il bottone solo se ci sono stati scambi nella chat
 if len(st.session_state.messages) > 2:
     st.divider()
     if st.button("🏁 VALUTA LA MIA VENDITA"):
-        with st.spinner("Analisi in corso..."):
+        with st.spinner("Il Coach sta analizzando la tua performance..."):
+            
+            # Creiamo il testo della conversazione
+            chat_text = ""
+            for msg in st.session_state.messages:
+                chat_text += f"{msg['role'].upper()}: {msg['content']}\n"
+            
+            # Prompt Dinamico: Il giudice sa quale scenario stavi giocando
             judge_prompt = f"""
-            Sei un coach di vendita.
-            SCENARIO: {current_scenario['sintomo']}
-            OBIETTIVO: {current_scenario['obiettivo_vendita']}
+            Sei un Direttore Commerciale Farmaceutico.
+            SCENARIO ATTIVO: {current_scenario['sintomo']}
+            CLIENTE: {current_scenario['persona']}
+            OBIETTIVO DI VENDITA (KPI): {current_scenario['obiettivo_vendita']}
             
-            Analizza la chat. Il farmacista ha proposto TUTTI i prodotti dell'obiettivo?
-            Ha spiegato il beneficio?
+            Analizza la seguente trascrizione della vendita.
             
-            Dai un voto 0-100 e un consiglio pratico.
+            CRITERI DI VALUTAZIONE:
+            1. PROTOCOLLO: Ha proposto TUTTI i prodotti dell'Obiettivo? (Sì/No)
+            2. CROSS-SELLING: Ha spiegato il legame tra i prodotti?
+            3. CHIUSURA: Ha chiesto esplicitamente l'acquisto?
+            
+            Output richiesto (JSON):
+            {{
+              "score": (voto 0-100),
+              "feedback": "Commento tagliente su cosa manca.",
+              "consiglio": "Frase esatta da usare la prossima volta."
+            }}
             """
-            # (Qui andrebbe la chiamata al giudice, per ora simuliamo per brevità di codice)
-            # Per l'MVP V2, aggiungeremo la chiamata reale nel prossimo step.
-            st.info("Funzione Analisi in aggiornamento per il supporto multi-scenario.")
+            
+            try:
+                completion = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": judge_prompt},
+                        {"role": "user", "content": chat_text}
+                    ],
+                    temperature=0.2
+                )
+                analysis = completion.choices[0].message.content
+                st.success("Analisi Completata")
+                st.info(analysis)
+            except Exception as e:
+                st.error(f"Errore Analisi: {e}")
