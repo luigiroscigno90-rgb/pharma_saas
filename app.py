@@ -3,6 +3,7 @@ import os
 from groq import Groq
 import asyncio
 import edge_tts
+import base64
 
 # --- CONFIGURAZIONE ---
 try:
@@ -104,7 +105,19 @@ if user_input:
             with st.chat_message("assistant"):
                 st.write(ai_response)
                 # Mostra il player audio sotto il testo
-                st.audio("response.mp3", format="audio/mp3")
+                s# --- LOGICA AUDIO AUTOPLAY ---
+            with open("response.mp3", "rb") as f:
+                data = f.read()
+                b64 = base64.b64encode(data).decode()
+                md = f"""
+                    <audio autoplay="true">
+                    <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+                    </audio>
+                    """
+                st.markdown(md, unsafe_allow_html=True)
+            
+            # Lasciamo comunque il widget visibile se l'utente vuole riascoltarlo
+            st.audio("response.mp3", format="audio/mp3")
                 
         except Exception as e:
             st.error(f"Errore AI: {e}")
