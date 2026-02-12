@@ -78,7 +78,6 @@ if user_input:
     # Genera Risposta
     with st.spinner(f"{current_scenario['persona'].split(',')[0]} sta rispondendo..."):
         try:
-            # Costruiamo il prompt dinamico in base allo scenario scelto
             sys_prompt = f"""
             {current_scenario['prompt_cliente']}
             Rispondi in italiano, brevemente (max 2 frasi).
@@ -91,16 +90,24 @@ if user_input:
             )
             ai_response = completion.choices[0].message.content
             
-            # Audio (Opzionale - se dà errore lo saltiamo silenziosamente)
-            # asyncio.run(...) qui semplificato per stabilità
-            
+            # --- AGGIUNTA VOCE ---
+            async def speak(text):
+                # Usiamo una voce femminile italiana naturale
+                communicate = edge_tts.Communicate(text, "it-IT-ElsaNeural")
+                await communicate.save("response.mp3")
+
+            import asyncio
+            asyncio.run(speak(ai_response))
+            # ---------------------
+
             st.session_state.messages.append({"role": "assistant", "content": ai_response})
             with st.chat_message("assistant"):
                 st.write(ai_response)
+                # Mostra il player audio sotto il testo
+                st.audio("response.mp3", format="audio/mp3")
                 
         except Exception as e:
             st.error(f"Errore AI: {e}")
-
 # --- IL GIUDICE (ANALISI) ---
 # Mostra il bottone solo se ci sono stati scambi nella chat
 if len(st.session_state.messages) > 2:
