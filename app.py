@@ -1,22 +1,14 @@
-import os  # FONDAMENTALE per os.environ
+import os
 import streamlit as st
 import google.generativeai as genai
-import pandas as pd
-from datetime import datetime
-import json
-import base64
-import asyncio
-import edge_tts
 
-# Forza l'uso dell'API corretta
-os.environ["GOOGLE_GENAI_USE_V1"] = "1"
-# --- 1. CONFIGURAZIONE E SICUREZZA ---
+# Forza l'ambiente a NON usare la beta se non necessario
+os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
-# Nota: Assicurati di avere GOOGLE_API_KEY e APP_PASSWORD nei Secrets
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Usiamo il nome corto 'gemini-1.5-flash', è il più compatibile
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Usa questo nome esatto, senza prefissi "models/"
+    model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
     st.error(f"Errore configurazione: {e}")
     st.stop()
@@ -121,20 +113,22 @@ if user_input:
 
     with st.spinner("Il cliente risponde..."):
         try:
-            # Costruiamo il prompt completo includendo la storia per Gemini
-            history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            full_instruction = f"""
-            {current_scenario['prompt_cliente']} 
+            # Costruiamo il contesto storico manualmente per evitare bug di versione
+            history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            
+            prompt_finale = f"""
+            {current_scenario['prompt_cliente']}
             Rispondi in italiano, max 2 frasi.
-            Storia conversazione:
-            {history_text}
+            
+            STORIA CONVERSAZIONE:
+            {history_context}
             """
             
-            # Chiamata diretta (più stabile della modalità chat)
-            response = model.generate_content(full_instruction)
+            # Chiamata diretta al modello
+            response = model.generate_content(prompt_finale)
             ai_response = response.text
 
-            # Audio
+            # --- AUDIO ---
             asyncio.run(generate_audio(ai_response))
             with open("response.mp3", "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -144,6 +138,7 @@ if user_input:
             st.rerun()
 
         except Exception as e:
+            # Se l'errore persiste, mostriamo esattamente cosa non va
             st.error(f"Errore tecnico Gemini: {e}")
 
 # --- 7. IL GIUDICE ---
