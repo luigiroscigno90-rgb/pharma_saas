@@ -10,11 +10,10 @@ import edge_tts
 
 # --- 1. CONFIGURAZIONE E SICUREZZA ---
 
-# Recupero Chiavi
 try:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
-    # Utilizziamo Gemini 1.5 Pro (il motore di Gemini 3 Pro)
+    # Utilizziamo l'endpoint più stabile per Gemini 1.5 Pro
     model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
 except Exception as e:
     st.error("Errore: GOOGLE_API_KEY non configurata correttamente nei Secrets.")
@@ -110,6 +109,7 @@ st.title(f"Simulazione: {scenario_name}")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Visualizzazione cronologia
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
@@ -122,26 +122,33 @@ if user_input:
         st.write(user_input)
 
     with st.spinner("Il cliente riflette..."):
-        # Logica di risposta con Gemini
-        history = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
-        chat = model.start_chat(history=history)
+        # Costruzione history per Gemini (ruoli 'user' e 'model')
+        formatted_history = []
+        for m in st.session_state.messages[:-1]:
+            role = "user" if m["role"] == "user" else "model"
+            formatted_history.append({"role": role, "parts": [m["content"]]})
         
-        sys_prompt = f"{current_scenario['prompt_cliente']} Rispondi in italiano, in modo breve e colloquiale (max 2 frasi)."
+        chat = model.start_chat(history=formatted_history)
         
-        response = chat.send_message(f"CONTESTO: {sys_prompt}\n\nCLIENTE: {user_input}")
-        ai_response = response.text
-        
-        # Audio Autoplay
-        asyncio.run(generate_audio(ai_response))
-        with open("response.mp3", "rb") as f:
-            data = f.read()
-            b64 = base64.b64encode(data).decode()
-            st.markdown(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
+        try:
+            # Invio messaggio con istruzioni di sistema contestuali
+            response = chat.send_message(
+                f"SISTEMA: {current_scenario['prompt_cliente']} Rispondi in italiano, max 2 frasi.\nUTENTE: {user_input}"
+            )
+            ai_response = response.text
+            
+            # Audio e Autoplay
+            asyncio.run(generate_audio(ai_response))
+            with open("response.mp3", "rb") as f:
+                data = f.read()
+                b64 = base64.b64encode(data).decode()
+                st.markdown(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
+            
+            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            st.rerun()
 
-    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-    with st.chat_message("assistant"):
-        st.write(ai_response)
-        st.audio("response.mp3")
+        except Exception as e:
+            st.error(f"Errore API Gemini: {e}")
 
 # --- 6. IL GIUDICE (ANALISI GEMINI 3 PRO) ---
 
@@ -156,12 +163,7 @@ if len(st.session_state.messages) > 1:
             Valuta la vendita per lo scenario: {current_scenario['sintomo']}.
             Obiettivo richiesto: {current_scenario['obiettivo_vendita']}.
             
-            Analizza:
-            1. Empatia.
-            2. Proposta del protocollo completo (Cross-selling).
-            3. Efficacia della chiusura.
-
-            Restituisci ESCLUSIVAMENTE un JSON con queste chiavi:
+            Restituisci ESCLUSIVAMENTE un JSON:
             {{
               "score": (numero 0-100),
               "margine_euro": (numero stimato 5-40),
@@ -170,10 +172,10 @@ if len(st.session_state.messages) > 1:
             }}
             """
             
-            res_ai = model.generate_content(judge_prompt + "\n\nTRASCRIZIONE:\n" + chat_history)
-            
             try:
-                # Estrazione sicura del JSON
+                res_ai = model.generate_content(judge_prompt + "\n\nTRASCRIZIONE:\n" + chat_history)
+                
+                # Pulizia JSON
                 json_str = res_ai.text.strip()
                 if "```json" in json_str:
                     json_str = json_str.split("```json")[1].split("```")[0]
@@ -191,7 +193,7 @@ if len(st.session_state.messages) > 1:
                 registra_simulazione(st.session_state.user_name, scenario_name, res['score'], res['margine_euro'])
                 
             except Exception as e:
-                st.error("Errore nell'analisi dei dati. Gemini ha risposto in modo non strutturato.")
+                st.error("Errore nell'analisi. Gemini ha risposto in modo non strutturato.")
                 st.write(res_ai.text)
 
 # --- 7. DASHBOARD ANALYTICS ---
@@ -202,7 +204,6 @@ if st.sidebar.checkbox("📊 Dashboard Titolare"):
     try:
         df_dash = pd.read_csv("storico_performance.csv")
         
-        # Statistiche Flash
         col1, col2 = st.columns(2)
         col1.metric("Margine Totale Stimato", f"€ {df_dash['Margine_Potenziale'].sum()}")
         col2.metric("Punteggio Medio Team", f"{int(df_dash['Punteggio'].mean())}/100")
@@ -210,9 +211,8 @@ if st.sidebar.checkbox("📊 Dashboard Titolare"):
         st.subheader("Storico Sessioni")
         st.dataframe(df_dash.sort_values(by="Data", ascending=False), use_container_width=True)
         
-        # Grafico semplice
         st.subheader("Andamento Performance")
         st.line_chart(df_dash.set_index("Data")["Punteggio"])
         
     except:
-        st.info("Nessun dato registrato. Completa la prima simulazione per attivare i grafici.")
+        st.info("Nessun dato registrato. Completa la prima simulazione.")
