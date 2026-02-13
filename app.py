@@ -1,5 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
+# Forza l'uso di v1 se disponibile
+os.environ["GOOGLE_GENAI_USE_V1"] = "1"
 import os
 import pandas as pd
 from datetime import datetime
@@ -14,7 +16,7 @@ import edge_tts
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     # Utilizziamo la versione flash-latest per massima stabilità
-    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error("Errore di configurazione API. Verifica i Secrets.")
     st.stop()
@@ -119,33 +121,30 @@ if user_input:
 
     with st.spinner("Il cliente risponde..."):
         try:
-            # 1. Prepariamo la history pulita per Gemini
-            # Gemini non accetta il ruolo 'assistant', vuole 'model'
-            history_gemini = []
-            for m in st.session_state.messages[:-1]:
-                role = "user" if m["role"] == "user" else "model"
-                history_gemini.append({"role": role, "parts": [m["content"]]})
+            # Costruiamo il prompt completo includendo la storia per Gemini
+            history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            full_instruction = f"""
+            {current_scenario['prompt_cliente']} 
+            Rispondi in italiano, max 2 frasi.
+            Storia conversazione:
+            {history_text}
+            """
             
-            # 2. Avviamo la chat
-            chat = model.start_chat(history=history_gemini)
-            
-            # 3. Inviamo il messaggio con istruzione contestuale
-            context_msg = f"CONTESTO: {current_scenario['prompt_cliente']} Rispondi brevemente in italiano.\nUTENTE: {user_input}"
-            response = chat.send_message(context_msg)
+            # Chiamata diretta (più stabile della modalità chat)
+            response = model.generate_content(full_instruction)
             ai_response = response.text
 
-            # 4. Audio Autoplay
+            # Audio
             asyncio.run(generate_audio(ai_response))
             with open("response.mp3", "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
                 st.markdown(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
-            # 5. Salvataggio e Refresh
             st.session_state.messages.append({"role": "assistant", "content": ai_response})
             st.rerun()
 
         except Exception as e:
-            st.error(f"Errore tecnico: {e}")
+            st.error(f"Errore tecnico Gemini: {e}")
 
 # --- 7. IL GIUDICE ---
 
