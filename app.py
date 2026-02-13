@@ -8,22 +8,21 @@ import base64
 import asyncio
 import edge_tts
 
-# --- 1. CONFIGURAZIONE MOTORE ELITE ---
+# --- 1. CONFIGURAZIONE MOTORE ---
 st.set_page_config(page_title="PharmaFlow AI Pro", page_icon="💊", layout="wide")
 
-# Forza l'uso dell'API stabile
+# Forza l'uso dell'endpoint stabile per evitare l'errore v1beta
 os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Usiamo il nome 1.5-flash: è lo stesso "motore" che Gemini 3 usa per la velocità, 
-    # ma con il nome compatibile per la libreria 0.8.6
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    # Nome modello esplicito con prefisso per massima compatibilità con la v0.8.6
+    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash') 
 except Exception as e:
-    st.error(f"⚠️ Errore critico configurazione: {e}")
+    st.error(f"⚠️ Errore configurazione: {e}")
     st.stop()
 
-# --- 2. LOGICA DI STORAGE E ASSETS ---
+# --- 2. FUNZIONI DI SISTEMA ---
 
 def registra_simulazione(nome, scenario, punteggio, margine):
     file_nome = "storico_performance.csv"
@@ -42,66 +41,54 @@ def registra_simulazione(nome, scenario, punteggio, margine):
     df.to_csv(file_nome, index=False)
 
 async def generate_audio(text):
-    # Elsa è professionale e chiara per l'ambiente farmacia
     communicate = edge_tts.Communicate(text, "it-IT-ElsaNeural")
     await communicate.save("response.mp3")
 
-# --- 3. SECURITY GATE ---
+# --- 3. LOGIN SYSTEM ---
 
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-
     if st.session_state.password_correct:
         return True
 
     st.title("🛡️ PharmaFlow AI Pro - Accesso Riservato")
-    
     with st.form("login_form"):
         nome_utente = st.text_input("Identificativo Professionista:")
         password = st.text_input("Password di Accesso:", type="password")
         submit = st.form_submit_button("Sblocca Sistema")
-        
         if submit:
             if password == st.secrets["APP_PASSWORD"] and nome_utente.strip() != "":
                 st.session_state.password_correct = True
                 st.session_state.user_name = nome_utente.strip()
                 st.rerun()
             else:
-                st.error("Accesso negato. Credenziali non valide.")
+                st.error("Credenziali non valide.")
     return False
 
 if not check_password():
     st.stop()
 
-# --- 4. SCENARI AD ALTO MARGINE ---
+# --- 4. DATASET SCENARI ---
 
 SCENARIOS = {
     "Dolore Ginocchio 🦵": {
         "persona": "Maria, 65 anni, diffidente.",
         "obiettivo_vendita": "Protocollo: Crema Antinfiammatoria + Ciclo Collagene.",
-        "prompt_cliente": "Sei Maria. Sei stanca del dolore ma non vuoi 'buttare soldi'. Accetti il collagene solo se il farmacista è autorevole e spiega che la crema cura il sintomo, ma il collagene rigenera la cartilagine."
+        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Sei tirchia. Accetti il collagene solo se ti spiegano che la crema cura il sintomo, ma il collagene rigenera la cartilagine."
     },
     "Tosse Secca 😷": {
-        "persona": "Luca, 30 anni, fumatore, frettoloso.",
+        "persona": "Luca, 30 anni, fumatore.",
         "obiettivo_vendita": "Protocollo: Sciroppo Sedativo + Spray Gola Protettivo.",
-        "prompt_cliente": "Sei Luca. Hai fretta. Vuoi solo lo sciroppo. Rifiuti lo spray a meno che non ti spieghino che il fumo ha rimosso la protezione naturale della gola e lo spray la ripristina."
-    },
-    "Insonnia 🌙": {
-        "persona": "Giulia, 40 anni, manager stressata.",
-        "obiettivo_vendita": "Protocollo: Melatonina Retard + Magnesio Supremo.",
-        "prompt_cliente": "Sei Giulia. Dormi male ma hai paura di 'rimanere rintontita' al mattino. Accetti il magnesio solo se ti spiegano l'azione biochimica sul sistema nervoso."
+        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola irritata dal fumo."
     }
 }
 
-# --- 5. INTERFACCIA DI ALLENAMENTO ---
+# --- 5. INTERFACCIA ---
 
 st.sidebar.title(f"👨‍⚕️ Dr. {st.session_state.user_name}")
 scenario_name = st.sidebar.selectbox("Caso Clinico:", list(SCENARIOS.keys()))
 current_scenario = SCENARIOS[scenario_name]
-
-st.sidebar.markdown(f"**Paziente:** {current_scenario['persona']}")
-st.sidebar.info(f"🎯 **KPI Obiettivo:** {current_scenario['obiettivo_vendita']}")
 
 if st.sidebar.button("🔄 Reset Simulazione"):
     st.session_state.messages = []
@@ -112,12 +99,11 @@ st.title(f"Simulazione: {scenario_name}")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display conversazione
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# --- 6. LOGICA CHAT GEMINI 3 FLASH ---
+# --- 6. CHAT LOGIC (BYPASS MODALITÀ CHAT PER EVITARE 404) ---
 
 user_input = st.chat_input("Digita il tuo consiglio professionale...")
 
@@ -126,24 +112,24 @@ if user_input:
     with st.chat_message("user"):
         st.write(user_input)
 
-    with st.spinner("Il cliente analizza la proposta..."):
+    with st.spinner("Il cliente risponde..."):
         try:
-            # Storia per contesto
-            history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            # Costruiamo il contesto testuale completo
+            full_history = ""
+            for m in st.session_state.messages:
+                full_history += f"{m['role']}: {m['content']}\n"
             
-            # Prompt ingegnerizzato per Gemini 3
             prompt_engine = f"""
             {current_scenario['prompt_cliente']}
-            Rispondi in modo realistico, breve (max 2 frasi) e con il tono del paziente descritto.
-            
-            STORICO CONVERSAZIONE:
-            {history_text}
+            Rispondi in modo breve (max 2 frasi).
+            STORIA CONVERSAZIONE:
+            {full_history}
             """
             
+            # Chiamata diretta generate_content (più stabile)
             response = model.generate_content(prompt_engine)
             ai_response = response.text
 
-            # Generazione Audio Real-time
             asyncio.run(generate_audio(ai_response))
             with open("response.mp3", "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -153,74 +139,27 @@ if user_input:
             st.rerun()
 
         except Exception as e:
-            st.error(f"⚠️ Errore di comunicazione AI: {e}")
+            st.error(f"Dettaglio Errore: {e}")
 
-# --- 7. IL GIUDICE COMMERCIALE (ANALISI AVANZATA) ---
+# --- 7. IL GIUDICE ---
 
 if len(st.session_state.messages) > 1:
     st.divider()
-    if st.button("🏁 ANALIZZA PERFORMANCE E CHIUDI VENDITA"):
-        with st.spinner("Il Direttore Commerciale sta valutando la sessione..."):
+    if st.button("🏁 ANALIZZA PERFORMANCE"):
+        with st.spinner("Valutazione in corso..."):
             chat_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
             
             judge_prompt = f"""
-            Sei un esperto di vendite in farmacia. Analizza questa trascrizione.
-            SCENARIO: {scenario_name}
-            OBIETTIVO: {current_scenario['obiettivo_vendita']}
-            
-            Analizza rigore scientifico, empatia e chiusura commerciale.
-            
-            RESTITUISCI SOLO JSON PURO:
-            {{
-                "score": 0-100,
-                "margine_euro": 5-40,
-                "feedback": "Analisi tagliente della performance.",
-                "consiglio": "Script esatto da usare per chiudere la prossima volta."
-            }}
-            
-            TRASCRIZIONE:
-            {chat_text}
+            Analizza questa vendita farmaceutica. Scenario: {scenario_name}.
+            Restituisci SOLO un JSON:
+            {{ "score": 0-100, "margine_euro": 5-30, "feedback": "...", "consiglio": "..." }}
+            \n\nTRASCRIZIONE:\n{chat_text}
             """
             
             try:
                 res_ai = model.generate_content(judge_prompt)
-                # Pulizia JSON aggressiva
                 json_clean = res_ai.text.replace('```json', '').replace('```', '').strip()
                 res = json.loads(json_clean)
                 
-                # Visualizzazione Risultati
-                st.balloons()
                 st.header("📊 Verdetto Strategico")
-                col1, col2 = st.columns(2)
-                col1.metric("Punteggio Vendita", f"{res['score']}/100")
-                col2.metric("Margine Recuperato", f"€ {res['margine_euro']}")
-                
-                with st.expander("Vedi Analisi Dettagliata", expanded=True):
-                    st.write(f"**Feedback:** {res['feedback']}")
-                    st.success(f"**Script d'Oro:** {res['consiglio']}")
-                
-                registra_simulazione(st.session_state.user_name, scenario_name, res['score'], res['margine_euro'])
-                
-            except Exception as e:
-                st.error(f"Errore nell'analisi del verdetto: {e}")
-
-# --- 8. DASHBOARD ANALYTICS ---
-
-st.sidebar.divider()
-if st.sidebar.checkbox("📈 Dashboard Titolare"):
-    st.title("📊 Business Intelligence Farmacia")
-    try:
-        df = pd.read_csv("storico_performance.csv")
-        
-        # Statistiche di alto livello
-        m1, m2 = st.columns(2)
-        m1.metric("Margine Totale Stimato", f"€ {df['Margine_Potenziale'].sum()}")
-        m2.metric("Rating Medio Team", f"{int(df['Punteggio'].mean())}/100")
-        
-        st.subheader("Storico Performance Collaboratori")
-        st.dataframe(df.sort_values(by="Data", ascending=False), use_container_width=True)
-        
-        st.subheader("Trend Miglioramento")
-        st.line_chart(df.set_index("Data")["Punteggio"])
-    except:
-        st.info("Nessun dato ancora disponibile. Inizia la prima simulazione.")
+                st.metric("Punteggio", f
