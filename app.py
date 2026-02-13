@@ -10,16 +10,16 @@ import edge_tts
 
 # --- 1. CONFIGURAZIONE E SICUREZZA ---
 
+# Nota: Assicurati di avere GOOGLE_API_KEY e APP_PASSWORD nei Secrets
 try:
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=GOOGLE_API_KEY)
-    # Utilizziamo l'endpoint più stabile per Gemini 1.5 Pro
-    model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    # Utilizziamo la versione flash-latest per massima stabilità
+    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
 except Exception as e:
-    st.error("Errore: GOOGLE_API_KEY non configurata correttamente nei Secrets.")
+    st.error("Errore di configurazione API. Verifica i Secrets.")
     st.stop()
 
-# --- 2. FUNZIONI DI SISTEMA (Database e Audio) ---
+# --- 2. FUNZIONI DI SISTEMA ---
 
 def registra_simulazione(nome, scenario, punteggio, margine):
     file_nome = "storico_performance.csv"
@@ -50,20 +50,19 @@ def check_password():
     if st.session_state.password_correct:
         return True
 
-    st.set_page_config(page_title="PharmaFlow Pro - Login", page_icon="💊")
+    st.set_page_config(page_title="PharmaFlow Pro", page_icon="💊")
     st.title("🛡️ Accesso PharmaFlow AI Pro")
-    st.markdown("Piattaforma di Alta Formazione per Farmacisti.")
     
-    nome_utente = st.text_input("Nome e Cognome del Professionista:")
-    password = st.text_input("Password Aziendale:", type="password")
+    nome_utente = st.text_input("Nome Professionista:")
+    password = st.text_input("Password:", type="password")
     
-    if st.button("Accedi"):
+    if st.button("Entra"):
         if password == st.secrets["APP_PASSWORD"] and nome_utente.strip() != "":
             st.session_state.password_correct = True
             st.session_state.user_name = nome_utente.strip()
             st.rerun()
         else:
-            st.error("Credenziali errate o nome mancante.")
+            st.error("Credenziali errate.")
     return False
 
 if not check_password():
@@ -74,30 +73,26 @@ if not check_password():
 SCENARIOS = {
     "Dolore Ginocchio 🦵": {
         "persona": "Maria, 65 anni, diffidente.",
-        "sintomo": "Dolore al ginocchio che non passa.",
         "obiettivo_vendita": "Protocollo: Crema Antinfiammatoria + Collagene Idrolizzato.",
-        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Sei tirchia. Accetti il collagene solo se ti spiegano chiaramente che non è una semplice vitamina ma rigenera la cartilagine."
+        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Sei tirchia. Accetti il collagene solo se ti spiegano che rigenera la cartilagine."
     },
     "Tosse Secca 😷": {
-        "persona": "Luca, 30 anni, fumatore, ha fretta.",
-        "sintomo": "Tosse stizzosa che non mi fa dormire.",
-        "obiettivo_vendita": "Protocollo: Sciroppo Sedativo + Spray Gola Protettivo.",
-        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che crea un film protettivo per calmare l'irritazione da fumo."
+        "persona": "Luca, 30 anni, fumatore.",
+        "obiettivo_vendita": "Protocollo: Sciroppo Sedativo + Spray Gola.",
+        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola dal fumo."
     },
     "Insonnia 🌙": {
         "persona": "Giulia, 40 anni, manager stressata.",
-        "sintomo": "Risvegli notturni alle 3.",
         "obiettivo_vendita": "Protocollo: Melatonina Retard + Magnesio.",
-        "prompt_cliente": "Sei Giulia. Ansiosa. Accetti il magnesio solo se ti spiegano che rilassa i muscoli e calma lo stress mentale."
+        "prompt_cliente": "Sei Giulia. Ansiosa. Accetti il magnesio solo se ti spiegano che rilassa i muscoli tesi."
     }
 }
 
-# --- 5. INTERFACCIA E CHAT ---
+# --- 5. INTERFACCIA ---
 
 st.sidebar.title(f"👤 Dr. {st.session_state.user_name}")
-scenario_name = st.sidebar.selectbox("Seleziona Scenario Clinico:", list(SCENARIOS.keys()))
+scenario_name = st.sidebar.selectbox("Caso del giorno:", list(SCENARIOS.keys()))
 current_scenario = SCENARIOS[scenario_name]
-
 st.sidebar.info(f"🎯 **Obiettivo:** {current_scenario['obiettivo_vendita']}")
 
 if st.sidebar.button("🔄 Nuova Sessione"):
@@ -109,110 +104,89 @@ st.title(f"Simulazione: {scenario_name}")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Visualizzazione cronologia
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-user_input = st.chat_input("Formula la tua proposta al paziente...")
+# --- 6. CHAT LOGIC (CORRETTA PER GEMINI) ---
+
+user_input = st.chat_input("Consiglia il paziente...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
 
-    with st.spinner("Il cliente riflette..."):
-        # Costruzione history per Gemini (ruoli 'user' e 'model')
-        formatted_history = []
-        for m in st.session_state.messages[:-1]:
-            role = "user" if m["role"] == "user" else "model"
-            formatted_history.append({"role": role, "parts": [m["content"]]})
-        
-        chat = model.start_chat(history=formatted_history)
-        
+    with st.spinner("Il cliente risponde..."):
         try:
-            # Invio messaggio con istruzioni di sistema contestuali
-            response = chat.send_message(
-                f"SISTEMA: {current_scenario['prompt_cliente']} Rispondi in italiano, max 2 frasi.\nUTENTE: {user_input}"
-            )
-            ai_response = response.text
+            # 1. Prepariamo la history pulita per Gemini
+            # Gemini non accetta il ruolo 'assistant', vuole 'model'
+            history_gemini = []
+            for m in st.session_state.messages[:-1]:
+                role = "user" if m["role"] == "user" else "model"
+                history_gemini.append({"role": role, "parts": [m["content"]]})
             
-            # Audio e Autoplay
+            # 2. Avviamo la chat
+            chat = model.start_chat(history=history_gemini)
+            
+            # 3. Inviamo il messaggio con istruzione contestuale
+            context_msg = f"CONTESTO: {current_scenario['prompt_cliente']} Rispondi brevemente in italiano.\nUTENTE: {user_input}"
+            response = chat.send_message(context_msg)
+            ai_response = response.text
+
+            # 4. Audio Autoplay
             asyncio.run(generate_audio(ai_response))
             with open("response.mp3", "rb") as f:
-                data = f.read()
-                b64 = base64.b64encode(data).decode()
+                b64 = base64.b64encode(f.read()).decode()
                 st.markdown(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
-            
+
+            # 5. Salvataggio e Refresh
             st.session_state.messages.append({"role": "assistant", "content": ai_response})
             st.rerun()
 
         except Exception as e:
-            st.error(f"Errore API Gemini: {e}")
+            st.error(f"Errore tecnico: {e}")
 
-# --- 6. IL GIUDICE (ANALISI GEMINI 3 PRO) ---
+# --- 7. IL GIUDICE ---
 
 if len(st.session_state.messages) > 1:
     st.divider()
-    if st.button("🏁 TERMINA E VALUTA PERFORMANCE"):
-        with st.spinner("Il Consulente AI sta analizzando la sessione..."):
-            chat_history = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
+    if st.button("🏁 VALUTA LA MIA VENDITA"):
+        with st.spinner("Analisi in corso..."):
+            chat_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
             
             judge_prompt = f"""
-            Sei un Senior Consultant per farmacie d'elite. 
-            Valuta la vendita per lo scenario: {current_scenario['sintomo']}.
-            Obiettivo richiesto: {current_scenario['obiettivo_vendita']}.
-            
-            Restituisci ESCLUSIVAMENTE un JSON:
-            {{
-              "score": (numero 0-100),
-              "margine_euro": (numero stimato 5-40),
-              "feedback": "analisi critica breve",
-              "consiglio": "frase d'oro da dire"
-            }}
+            Analizza questa vendita farmaceutica. Scenario: {scenario_name}.
+            Restituisci SOLO un JSON:
+            {{ "score": 0-100, "margine_euro": 5-30, "feedback": "...", "consiglio": "..." }}
+            \n\nTRASCRIZIONE:\n{chat_text}
             """
             
             try:
-                res_ai = model.generate_content(judge_prompt + "\n\nTRASCRIZIONE:\n" + chat_history)
+                res_ai = model.generate_content(judge_prompt)
+                # Pulizia JSON per Gemini
+                text_clean = res_ai.text.replace('```json', '').replace('```', '').strip()
+                res = json.loads(text_clean)
                 
-                # Pulizia JSON
-                json_str = res_ai.text.strip()
-                if "```json" in json_str:
-                    json_str = json_str.split("```json")[1].split("```")[0]
-                
-                res = json.loads(json_str)
-                
-                st.header("🏆 Report di Valutazione")
+                st.header("🏆 Report Finale")
                 c1, c2 = st.columns(2)
                 c1.metric("Punteggio", f"{res['score']}/100")
-                c2.metric("Extra Margine", f"€ {res['margine_euro']}")
-                
-                st.info(f"**Feedback Tecnico:** {res['feedback']}")
-                st.success(f"**Consiglio del Coach:** {res['consiglio']}")
+                c2.metric("Margine", f"€ {res['margine_euro']}")
+                st.info(f"**Feedback:** {res['feedback']}")
                 
                 registra_simulazione(st.session_state.user_name, scenario_name, res['score'], res['margine_euro'])
-                
-            except Exception as e:
-                st.error("Errore nell'analisi. Gemini ha risposto in modo non strutturato.")
-                st.write(res_ai.text)
+                st.toast("Dati salvati!")
+            except:
+                st.error("Errore nell'analisi automatica.")
 
-# --- 7. DASHBOARD ANALYTICS ---
+# --- 8. DASHBOARD ---
 
 st.sidebar.divider()
-if st.sidebar.checkbox("📊 Dashboard Titolare"):
-    st.title("📈 Business Intelligence")
+if st.sidebar.checkbox("📊 Dashboard Admin"):
+    st.title("BI Analytics")
     try:
-        df_dash = pd.read_csv("storico_performance.csv")
-        
-        col1, col2 = st.columns(2)
-        col1.metric("Margine Totale Stimato", f"€ {df_dash['Margine_Potenziale'].sum()}")
-        col2.metric("Punteggio Medio Team", f"{int(df_dash['Punteggio'].mean())}/100")
-        
-        st.subheader("Storico Sessioni")
-        st.dataframe(df_dash.sort_values(by="Data", ascending=False), use_container_width=True)
-        
-        st.subheader("Andamento Performance")
-        st.line_chart(df_dash.set_index("Data")["Punteggio"])
-        
+        df = pd.read_csv("storico_performance.csv")
+        st.metric("Margine Totale", f"€ {df['Margine_Potenziale'].sum()}")
+        st.dataframe(df.sort_values(by="Data", ascending=False), use_container_width=True)
     except:
-        st.info("Nessun dato registrato. Completa la prima simulazione.")
+        st.info("Nessun dato registrato.")
