@@ -1,8 +1,6 @@
+import os  # FONDAMENTALE per os.environ
 import streamlit as st
 import google.generativeai as genai
-# Forza l'uso di v1 se disponibile
-os.environ["GOOGLE_GENAI_USE_V1"] = "1"
-import os
 import pandas as pd
 from datetime import datetime
 import json
@@ -10,15 +8,17 @@ import base64
 import asyncio
 import edge_tts
 
+# Forza l'uso dell'API corretta
+os.environ["GOOGLE_GENAI_USE_V1"] = "1"
 # --- 1. CONFIGURAZIONE E SICUREZZA ---
 
 # Nota: Assicurati di avere GOOGLE_API_KEY e APP_PASSWORD nei Secrets
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Utilizziamo la versione flash-latest per massima stabilità
+    # Usiamo il nome corto 'gemini-1.5-flash', è il più compatibile
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error("Errore di configurazione API. Verifica i Secrets.")
+    st.error(f"Errore configurazione: {e}")
     st.stop()
 
 # --- 2. FUNZIONI DI SISTEMA ---
