@@ -11,12 +11,12 @@ import edge_tts
 # --- 1. CONFIGURAZIONE MOTORE ---
 st.set_page_config(page_title="PharmaFlow AI Pro", page_icon="💊", layout="wide")
 
-# Forza l'uso dell'endpoint stabile per evitare l'errore v1beta
+# Forza l'uso dell'endpoint stabile
 os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Nome modello esplicito con prefisso per massima compatibilità con la v0.8.6
+    # Utilizzo del modello stabilizzato per la versione 0.8.6
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash') 
 except Exception as e:
     st.error(f"⚠️ Errore configurazione: {e}")
@@ -75,12 +75,12 @@ SCENARIOS = {
     "Dolore Ginocchio 🦵": {
         "persona": "Maria, 65 anni, diffidente.",
         "obiettivo_vendita": "Protocollo: Crema Antinfiammatoria + Ciclo Collagene.",
-        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Sei tirchia. Accetti il collagene solo se ti spiegano che la crema cura il sintomo, ma il collagene rigenera la cartilagine."
+        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Accetti il collagene solo se ti spiegano che rigenera la cartilagine."
     },
     "Tosse Secca 😷": {
         "persona": "Luca, 30 anni, fumatore.",
         "obiettivo_vendita": "Protocollo: Sciroppo Sedativo + Spray Gola Protettivo.",
-        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola irritata dal fumo."
+        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola irritata."
     }
 }
 
@@ -103,7 +103,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# --- 6. CHAT LOGIC (BYPASS MODALITÀ CHAT PER EVITARE 404) ---
+# --- 6. CHAT LOGIC ---
 
 user_input = st.chat_input("Digita il tuo consiglio professionale...")
 
@@ -114,19 +114,9 @@ if user_input:
 
     with st.spinner("Il cliente risponde..."):
         try:
-            # Costruiamo il contesto testuale completo
-            full_history = ""
-            for m in st.session_state.messages:
-                full_history += f"{m['role']}: {m['content']}\n"
+            full_history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            prompt_engine = f"{current_scenario['prompt_cliente']}\nRispondi brevemente.\nSTORIA:\n{full_history}"
             
-            prompt_engine = f"""
-            {current_scenario['prompt_cliente']}
-            Rispondi in modo breve (max 2 frasi).
-            STORIA CONVERSAZIONE:
-            {full_history}
-            """
-            
-            # Chiamata diretta generate_content (più stabile)
             response = model.generate_content(prompt_engine)
             ai_response = response.text
 
@@ -137,9 +127,8 @@ if user_input:
 
             st.session_state.messages.append({"role": "assistant", "content": ai_response})
             st.rerun()
-
         except Exception as e:
-            st.error(f"Dettaglio Errore: {e}")
+            st.error(f"Errore tecnico: {e}")
 
 # --- 7. IL GIUDICE ---
 
@@ -150,10 +139,10 @@ if len(st.session_state.messages) > 1:
             chat_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
             
             judge_prompt = f"""
-            Analizza questa vendita farmaceutica. Scenario: {scenario_name}.
+            Analizza la vendita. Scenario: {scenario_name}.
             Restituisci SOLO un JSON:
             {{ "score": 0-100, "margine_euro": 5-30, "feedback": "...", "consiglio": "..." }}
-            \n\nTRASCRIZIONE:\n{chat_text}
+            \nTRASCRIZIONE:\n{chat_text}
             """
             
             try:
@@ -162,4 +151,22 @@ if len(st.session_state.messages) > 1:
                 res = json.loads(json_clean)
                 
                 st.header("📊 Verdetto Strategico")
-                st.metric("Punteggio", f
+                st.metric("Punteggio", f"{res['score']}/100")
+                st.metric("Margine Stimato", f"€ {res['margine_euro']}")
+                st.info(f"**Feedback:** {res['feedback']}")
+                
+                registra_simulazione(st.session_state.user_name, scenario_name, res['score'], res['margine_euro'])
+            except:
+                st.error("Errore nell'analisi automatica.")
+
+# --- 8. DASHBOARD ---
+
+st.sidebar.divider()
+if st.sidebar.checkbox("📈 Dashboard Admin"):
+    st.title("Business Intelligence")
+    try:
+        df = pd.read_csv("storico_performance.csv")
+        st.metric("Margine Totale", f"€ {df['Margine_Potenziale'].sum()}")
+        st.dataframe(df.sort_values(by="Data", ascending=False))
+    except:
+        st.info("Nessun dato registrato.")
