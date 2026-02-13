@@ -12,7 +12,6 @@ import time
 # --- 1. CONFIGURAZIONE & STILE ---
 st.set_page_config(page_title="PharmaFlow AI", page_icon="⚕️", layout="wide")
 
-# CSS per look professionale (nasconde menu standard e pulisce l'interfaccia)
 st.markdown("""
     <style>
     .stApp {background-color: #f8f9fa;}
@@ -23,24 +22,25 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTORE AI AUTO-ADATTIVO (Non toccare, funziona) ---
+# --- 2. MOTORE AI AUTO-ADATTIVO ---
 def get_model():
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 if 'flash' in m.name: return genai.GenerativeModel(m.name)
-        return genai.GenerativeModel("gemini-1.5-flash") # Fallback
+        return genai.GenerativeModel("gemini-1.5-flash")
     except:
         st.error("Errore API Key. Controlla i settings.")
         st.stop()
 
 model = get_model()
 
-# --- 3. DATABASE SCENARI (Il Valore Vero) ---
+# --- 3. DATABASE SCENARI CON VOCI DIVERSIFICATE ---
 SCENARIOS = {
     "Dolore Articolare (Cross-Sell)": {
         "icon": "🦵",
+        "voice": "it-IT-ElsaNeural", # VOCE DONNA
         "persona": "Maria, 68 anni. Pensionata, diffidente ma vuole stare bene.",
         "sintomo": "Dolore al ginocchio che peggiora con l'umidità.",
         "obiettivo": "Vendere: Crema FANS (richiesta) + Collagene (proposta).",
@@ -48,6 +48,7 @@ SCENARIOS = {
     },
     "Tosse e Fumo (Prevenzione)": {
         "icon": "🚬",
+        "voice": "it-IT-DiegoNeural", # VOCE UOMO
         "persona": "Luca, 35 anni. Manager, fuma 10 sigarette al giorno.",
         "sintomo": "Tosse secca stizzosa, specialmente la mattina.",
         "obiettivo": "Vendere: Sciroppo (richiesto) + Spray Barriera (proposta).",
@@ -55,6 +56,7 @@ SCENARIOS = {
     },
     "Insonnia da Stress (Consiglio)": {
         "icon": "🌙",
+        "voice": "it-IT-ElsaNeural", # VOCE DONNA
         "persona": "Giulia, 42 anni. Avvocato, dorme 4 ore a notte.",
         "sintomo": "Mi sveglio alle 3 di notte e penso al lavoro.",
         "obiettivo": "Vendere: Melatonina Retard + Magnesio.",
@@ -62,6 +64,7 @@ SCENARIOS = {
     },
     "Reflusso Gastrico (High Ticket)": {
         "icon": "🔥",
+        "voice": "it-IT-DiegoNeural", # VOCE UOMO
         "persona": "Marco, 50 anni. Sovrappeso, mangia male.",
         "sintomo": "Bruciore di stomaco dopo i pasti.",
         "obiettivo": "Vendere: Alginati + Probiotici specifici.",
@@ -69,6 +72,7 @@ SCENARIOS = {
     },
     "Dermocosmesi Anti-Age (Luxury)": {
         "icon": "✨",
+        "voice": "it-IT-ElsaNeural", # VOCE DONNA
         "persona": "Elena, 55 anni. Cura molto l'aspetto.",
         "sintomo": "Vedo la pelle spenta e le rughe più marcate.",
         "obiettivo": "Vendere: Crema Giorno + Siero Concentrato (Upselling).",
@@ -76,11 +80,11 @@ SCENARIOS = {
     }
 }
 
-# --- 4. GESTIONE AUDIO MIGLIORATA ---
-async def text_to_speech(text):
+# --- 4. GESTIONE AUDIO DINAMICA ---
+async def text_to_speech(text, voice_id):
     try:
-        # Usa una voce maschile o femminile in base allo scenario? Per ora standardizziamo su Elsa
-        communicate = edge_tts.Communicate(text, "it-IT-ElsaNeural")
+        # Ora la funzione accetta l'ID della voce specifica
+        communicate = edge_tts.Communicate(text, voice_id)
         await communicate.save("temp_audio.mp3")
         return True
     except:
@@ -90,7 +94,7 @@ def autoplay_audio(file_path: str):
     with open(file_path, "rb") as f:
         data = f.read()
         b64 = base64.b64encode(data).decode()
-        # HTML5 Audio Player visibile e con autoplay
+        # Player HTML5 con autoplay
         md = f"""
             <audio controls autoplay style="width: 100%; margin-top: 10px;">
             <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
@@ -117,9 +121,8 @@ def save_kpi(user, scenario, score, revenue):
 
 # --- 6. INTERFACCIA UTENTE (UI) ---
 
-# Sidebar: Login e Selezione
 with st.sidebar:
-    st.title("PharmaFlow 2.0")
+    st.title("PharmaFlow 2.1")
     
     if "user" not in st.session_state:
         st.warning("🔒 Accesso Richiesto")
@@ -142,7 +145,6 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
     
-    # Mini Dashboard nella sidebar
     if st.checkbox("Mostra Statistiche"):
         try:
             df = pd.read_csv("kpi_db.csv")
@@ -159,24 +161,20 @@ st.markdown(f"**Paziente:** {current_data['persona']} | **Sintomo:** {current_da
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# Input Area
 user_input = st.chat_input("Cosa rispondi al paziente?")
 
 if user_input:
-    # 1. Scrivi messaggio utente
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
     
-    # 2. Genera risposta AI
     with st.spinner("Il paziente sta riflettendo..."):
         try:
-            # Costruzione Prompt Contestuale
+            # Prompt Contestuale
             history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             system_instruction = f"""
             Sei {current_data['persona']}. 
@@ -195,20 +193,20 @@ if user_input:
             response = model.generate_content(system_instruction)
             ai_text = response.text
             
-            # 3. Gestione Audio
-            asyncio.run(text_to_speech(ai_text))
+            # AUDIO DINAMICO: Passiamo la voce specifica dello scenario
+            voice_to_use = current_data['voice']
+            asyncio.run(text_to_speech(ai_text, voice_to_use))
             
         except Exception as e:
             ai_text = "Mi scusi, non ho capito. Può ripetere?"
             st.error(f"Errore: {e}")
 
-    # 4. Mostra risposta e audio
     st.session_state.messages.append({"role": "assistant", "content": ai_text})
     with st.chat_message("assistant"):
         st.write(ai_text)
         autoplay_audio("temp_audio.mp3")
 
-# --- 7. IL COACH (Analisi Finale) ---
+# --- 7. IL COACH ---
 if len(st.session_state.messages) > 2:
     st.divider()
     col1, col2 = st.columns([1, 4])
@@ -242,7 +240,6 @@ if len(st.session_state.messages) > 2:
                     
                     st.success("Analisi Completata")
                     
-                    # Visualizzazione Risultati "Card Style"
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Score", f"{data['voto']}/100")
                     c2.metric("Revenue", f"€ {data['soldi_recuperati']}")
