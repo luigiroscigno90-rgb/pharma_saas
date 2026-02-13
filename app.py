@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from groq import Groq # CAMBIO FONDAMENTALE
+from groq import Groq
 import pandas as pd
 from datetime import datetime
 import json
@@ -10,34 +10,41 @@ import edge_tts
 import plotly.graph_objects as go
 
 # --- 1. CONFIGURAZIONE & STILE ---
-st.set_page_config(page_title="PharmaFlow AI (Llama Edition)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="PharmaFlow AI Tutor", page_icon="🎓", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp {background-color: #f8f9fa;}
-    div[data-testid="stSidebar"] {background-color: #1e272e; color: white;}
-    h1, h2, h3 {color: #1e272e;}
+    .stApp {background-color: #f0f2f6;}
+    div[data-testid="stSidebar"] {background-color: #1a252f; color: white;}
     .stChatInput {border-radius: 20px;}
+    .stButton button {border-radius: 10px; font-weight: bold;}
+    /* Stile per il tasto Suggerimento */
+    div.stButton > button:first-child {
+        background-color: #ffffff;
+        color: #1a252f;
+        border: 1px solid #1a252f;
+    }
+    div.stButton > button:active {
+        background-color: #e8f0fe;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTORE AI (GROQ - LLAMA 3) ---
+# --- 2. MOTORE AI (GROQ) ---
 try:
-    # Inizializza il client Groq
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    st.error("Errore API Key. Assicurati di aver impostato GROQ_API_KEY nei secrets.")
+    st.error("⚠️ Manca la GROQ_API_KEY nei secrets!")
     st.stop()
 
-def get_ai_response(messages, model="llama-3.3-70b-versatile", temperature=0.7):
-    """Funzione universale per chiamare Llama 3"""
+def get_ai_response(messages, temp=0.7, json_mode=False):
     try:
         completion = client.chat.completions.create(
-            model=model,
+            model="llama-3.3-70b-versatile",
             messages=messages,
-            temperature=temperature,
+            temperature=temp,
             max_tokens=1024,
-            stream=False
+            response_format={"type": "json_object"} if json_mode else None
         )
         return completion.choices[0].message.content
     except Exception as e:
@@ -48,41 +55,36 @@ SCENARIOS = {
     "Dolore Articolare": {
         "voice": "it-IT-ElsaNeural",
         "persona": "Maria, 68 anni.",
-        "sintomo": "Ginocchio gonfio.",
         "obiettivo": "Vendere: Crema FANS + Collagene.",
-        "sys_prompt": "Sei Maria, 68 anni. Sei diffidente. Hai male al ginocchio. Vuoi solo la crema. Accetti il collagene SOLO se il farmacista ti spiega che la crema toglie il dolore oggi, ma il collagene ripara la cartilagine per il futuro. Se non lo spiega bene, rifiuta. Rispondi in massimo 20 parole."
+        "sys_prompt": "Sei Maria, 68 anni. Diffidente. Hai male al ginocchio. Vuoi solo la crema. Accetti il collagene SOLO se il farmacista ti spiega che la crema toglie il dolore oggi, ma il collagene ripara la cartilagine per il futuro. Rispondi in max 20 parole."
     },
     "Tosse Fumatore": {
         "voice": "it-IT-DiegoNeural",
         "persona": "Luca, 35 anni.",
-        "sintomo": "Tosse secca mattutina.",
         "obiettivo": "Vendere: Sciroppo + Spray Gola.",
-        "sys_prompt": "Sei Luca, 35 anni, fumatore. Hai fretta. Vuoi solo lo sciroppo. Rifiuti tutto il resto. Accetti lo spray SOLO se ti dicono che crea una barriera protettiva contro il fumo. Rispondi scocciato e breve (max 15 parole)."
+        "sys_prompt": "Sei Luca, 35 anni, fumatore. Hai fretta. Accetti lo spray SOLO se ti dicono che crea una barriera protettiva contro il fumo. Sii sbrigativo. Rispondi in max 15 parole."
     },
     "Insonnia Stress": {
         "voice": "it-IT-ElsaNeural",
         "persona": "Giulia, 42 anni.",
-        "sintomo": "Risvegli notturni.",
         "obiettivo": "Vendere: Melatonina + Magnesio.",
-        "sys_prompt": "Sei Giulia, manager stressata. Vuoi un sonnifero forte. Il farmacista deve convincerti a prendere Melatonina e Magnesio spiegando l'effetto rilassante sul sistema nervoso. Se propone farmaci pesanti, dì che hai paura della dipendenza. Sii breve."
+        "sys_prompt": "Sei Giulia, manager stressata. Vuoi farmaci forti. Accetti integratori SOLO se ti spiegano l'azione rilassante sul sistema nervoso. Sii scettica."
     },
      "Reflusso Gastrico": {
         "voice": "it-IT-DiegoNeural",
         "persona": "Marco, 50 anni.",
-        "sintomo": "Bruciore post-prandiale.",
         "obiettivo": "Vendere: Antiacido + Probiotici.",
-        "sys_prompt": "Sei Marco. Mangi male. Vuoi solo tamponare il bruciore. Compri i probiotici solo se ti spiegano che riequilibrano la digestione. Rispondi brevemente."
+        "sys_prompt": "Sei Marco. Mangi male. Vuoi solo tamponare il bruciore. Compri i probiotici solo se ti spiegano che riequilibrano la digestione."
     },
-    "Dermocosmesi": {
+    "Dermocosmesi Luxury": {
         "voice": "it-IT-ElsaNeural",
         "persona": "Elena, 55 anni.",
-        "sintomo": "Rughe e pelle spenta.",
         "obiettivo": "Vendere: Crema + Siero.",
-        "sys_prompt": "Sei Elena. Esigente. Compri il siero solo se ti spiegano tecnicamente come veicola la crema in profondità. Rispondi in modo snob e breve."
+        "sys_prompt": "Sei Elena. Esigente. Compri il siero solo se ti spiegano tecnicamente come veicola la crema in profondità."
     }
 }
 
-# --- 4. AUDIO & GRAFICI ---
+# --- 4. FUNZIONI UTILI ---
 async def text_to_speech(text, voice_id):
     try:
         communicate = edge_tts.Communicate(text, voice_id)
@@ -94,38 +96,43 @@ def autoplay_audio(file_path):
     with open(file_path, "rb") as f:
         data = f.read()
         b64 = base64.b64encode(data).decode()
-        md = f"""<audio controls autoplay style="width: 100%; margin-top: 10px;"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>"""
+        md = f"""<audio controls autoplay style="width: 100%; margin-top: 5px;"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>"""
         st.markdown(md, unsafe_allow_html=True)
 
-def plot_radar_chart(categories, values):
-    fig = go.Figure(data=go.Scatterpolar(r=values, theta=categories, fill='toself', name='Skill'))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
+def plot_radar(values):
+    categories = ['Empatia', 'Tecnica', 'Chiusura', 'Ascolto', 'Obiezioni']
+    fig = go.Figure(data=go.Scatterpolar(r=values, theta=categories, fill='toself', name='Tu'))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), showlegend=False, margin=dict(t=20, b=20, l=40, r=40))
     return fig
 
-# --- 5. UI PRINCIPALE ---
+# --- 5. SIDEBAR & SESSION STATE ---
+if "user" not in st.session_state:
+    st.session_state.user = "Guest"
+if "history_scores" not in st.session_state:
+    st.session_state.history_scores = []
+
 with st.sidebar:
-    st.title("PharmaFlow ⚡")
+    st.title("PharmaFlow Tutor")
     st.caption("Powered by Llama 3 & Groq")
     
-    if "user" not in st.session_state:
-        u = st.text_input("Utente")
-        p = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if p == st.secrets["APP_PASSWORD"]:
-                st.session_state.user = u
-                st.rerun()
-        st.stop()
-    
-    st.success(f"Dr. {st.session_state.user}")
     selected_scenario = st.selectbox("Scenario:", list(SCENARIOS.keys()))
-    hard_mode = st.toggle("🔥 Modalità Incubo", value=False)
+    hard_mode = st.toggle("🔥 Hard Mode", value=False)
     
-    if st.button("🔄 Nuova Sessione", use_container_width=True):
+    st.divider()
+    
+    # Progress Bar della sessione
+    if st.session_state.history_scores:
+        avg_score = sum(st.session_state.history_scores) / len(st.session_state.history_scores)
+        st.metric("Media Sessione", f"{int(avg_score)}/100")
+        st.progress(int(avg_score)/100)
+    
+    if st.button("🗑️ Reset Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
+# --- 6. MAIN CHAT INTERFACE ---
 current_data = SCENARIOS[selected_scenario]
-st.header(f"Simulazione: {selected_scenario}")
+st.header(f"🎓 Training: {selected_scenario}")
 st.markdown(f"**Paziente:** {current_data['persona']} | **Obiettivo:** {current_data['obiettivo']}")
 
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -134,108 +141,114 @@ if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.write(msg["content"])
 
-# --- 6. LOGICA CHAT ---
+# AREA SUGGERIMENTI (Il Tutor)
+col_hint, col_space = st.columns([1, 4])
+with col_hint:
+    if st.button("💡 Suggeriscimi cosa dire"):
+        with st.spinner("Il tutor sta pensando..."):
+            hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            hint_prompt = [{"role": "system", "content": f"Sei un formatore esperto. L'obiettivo è: {current_data['obiettivo']}. Leggi la chat e suggerisci al farmacista una frase breve ed efficace per convincere il cliente ORA. Rispondi solo con la frase."},
+                           {"role": "user", "content": f"Chat finora:\n{hist}"}]
+            hint = get_ai_response(hint_prompt)
+            st.toast(f"Tip: {hint}", icon="💡")
+            st.info(f"**Tutor:** Prova a dire: *{hint}*")
+
+# INPUT UTENTE
 user_input = st.chat_input("Scrivi la tua risposta...")
 
 if user_input:
-    # 1. Messaggio Utente
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"): st.write(user_input)
     
-    # 2. Generazione Risposta AI
-    with st.spinner("Il paziente riflette..."):
-        # Costruzione Messaggi per Llama
-        # Inseriamo il System Prompt all'inizio, ogni volta
-        messages_payload = [{"role": "system", "content": current_data['sys_prompt']}]
+    with st.spinner("Il paziente risponde..."):
+        # Logica Chat
+        sys_prompt = current_data['sys_prompt']
+        if hard_mode: sys_prompt += " Sii scontroso, interrompi, lamentati dei prezzi."
         
-        if hard_mode:
-             messages_payload[0]["content"] += " Sii MOLTO scortese, interrompi e lamentati del prezzo alto."
+        msgs = [{"role": "system", "content": sys_prompt}] + st.session_state.messages
+        ai_reply = get_ai_response(msgs)
+        
+        asyncio.run(text_to_speech(ai_reply, current_data['voice']))
 
-        # Aggiungiamo la cronologia
-        messages_payload.extend(st.session_state.messages)
-        
-        # Chiamata a Groq
-        ai_text = get_ai_response(messages_payload)
-        
-        # Audio
-        asyncio.run(text_to_speech(ai_text, current_data['voice']))
-
-    # 3. Output AI
-    st.session_state.messages.append({"role": "assistant", "content": ai_text})
+    st.session_state.messages.append({"role": "assistant", "content": ai_reply})
     with st.chat_message("assistant"):
-        st.write(ai_text)
+        st.write(ai_reply)
         autoplay_audio("temp_audio.mp3")
 
-# --- 7. ANALISI (JUDGE) ---
+# --- 7. ANALISI FINALE (PROFESSIONALE) ---
 if len(st.session_state.messages) > 2:
     st.divider()
-    if st.button("🏁 ANALIZZA SESSIONE", type="primary"):
-        with st.spinner("Analisi clinica e commerciale in corso..."):
+    if st.button("🏁 TERMINA E VALUTA", type="primary", use_container_width=True):
+        with st.spinner("Generazione Report Avanzato..."):
+            hist_txt = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
-            # Creiamo un prompt specifico per il "Giudice"
-            # Usiamo Llama 3 70B che è molto bravo nel reasoning
-            history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            
+            # Prompt Analitico Complesso (JSON Mode)
             judge_prompt = f"""
-            Agisci come un Direttore Commerciale Farmaceutico esperto.
-            Analizza questa transazione tra Farmacista e Paziente.
-            
+            Analizza questa vendita farmaceutica.
             SCENARIO: {selected_scenario}
             OBIETTIVO: {current_data['obiettivo']}
             
-            Devi restituire UNICAMENTE un JSON valido con questo formato esatto, senza altro testo:
+            Restituisci JSON puro:
             {{
-                "voto_empatia": (intero 1-10),
-                "voto_tecnica": (intero 1-10),
-                "voto_chiusura": (intero 1-10),
-                "totale": (intero 0-100),
-                "soldi": (intero stima euro),
-                "feedback": "stringa breve",
-                "frase_migliore": "stringa breve"
+                "score_empatia": (1-10),
+                "score_tecnica": (1-10),
+                "score_chiusura": (1-10),
+                "score_ascolto": (1-10),
+                "score_obiezioni": (1-10),
+                "totale": (0-100),
+                "revenue": (stima euro),
+                "feedback_main": "Breve commento generale",
+                "mistake": "L'errore più grave commesso",
+                "correction": "Cosa avrebbe dovuto dire invece",
+                "best_moment": "Il momento migliore della chat"
             }}
             
-            CHAT DA ANALIZZARE:
-            {history_text}
+            CHAT:
+            {hist_txt}
             """
             
-            # Chiamata isolata per l'analisi
-            messages_judge = [{"role": "user", "content": judge_prompt}]
-            res_judge = get_ai_response(messages_judge, temperature=0.1) # Bassa temperatura per JSON preciso
+            res_json = get_ai_response([{"role": "user", "content": judge_prompt}], json_mode=True)
             
             try:
-                # Pulizia JSON (Llama a volte è chiacchierone)
-                json_str = res_judge
-                if "```json" in json_str:
-                    json_str = json_str.split("```json")[1].split("```")[0]
-                elif "```" in json_str:
-                     json_str = json_str.split("```")[1].split("```")[0]
+                data = json.loads(res_json)
+                st.session_state.history_scores.append(data['totale'])
                 
-                data = json.loads(json_str.strip())
+                # --- LAYOUT REPORT A SCHEDE ---
+                st.balloons()
+                st.subheader("📊 Report di Performance")
                 
-                # Visualizzazione
-                c1, c2 = st.columns([1, 1])
-                with c1:
-                    st.subheader("📊 Radar Competenze")
-                    fig = plot_radar_chart(
-                        ['Empatia', 'Tecnica', 'Chiusura'], 
-                        [data['voto_empatia'], data['voto_tecnica'], data['voto_chiusura']]
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                tab1, tab2, tab3 = st.tabs(["📈 Overview", "🧠 Analisi Tattica", "📝 Trascrizione"])
+                
+                with tab1:
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        # Radar Chart
+                        vals = [data['score_empatia'], data['score_tecnica'], data['score_chiusura'], 
+                                data['score_ascolto'], data['score_obiezioni']]
+                        st.plotly_chart(plot_radar(vals), use_container_width=True)
+                    with c2:
+                        st.metric("Punteggio Finale", f"{data['totale']}/100")
+                        st.metric("Fatturato Stimato", f"€ {data['revenue']}")
+                        if data['totale'] > 75:
+                            st.success("✅ OBIETTIVO RAGGIUNTO")
+                        else:
+                            st.error("❌ VENDITA FALLITA")
 
-                with c2:
-                    st.subheader("📋 Report")
-                    m1, m2 = st.columns(2)
-                    m1.metric("Score", f"{data['totale']}/100")
-                    m2.metric("Revenue", f"€ {data['soldi']}")
-                    st.info(f"**Feedback:** {data['feedback']}")
-                    st.success(f"**Consiglio:** \"{data['frase_migliore']}\"")
+                with tab2:
+                    st.info(f"**Feedback Generale:** {data['feedback_main']}")
                     
-                    # Salvataggio CSV
-                    file = "kpi_db.csv"
-                    new_row = {"Date": datetime.now(), "User": st.session_state.user, "Score": data['totale']}
-                    try: pd.read_csv(file)._append(new_row, ignore_index=True).to_csv(file, index=False)
-                    except: pd.DataFrame([new_row]).to_csv(file, index=False)
+                    col_err, col_corr = st.columns(2)
+                    with col_err:
+                        st.error("🚫 **L'Errore:**")
+                        st.write(data['mistake'])
+                    with col_corr:
+                        st.success("✨ **La Correzione:**")
+                        st.write(data['correction'])
+                    
+                    st.write(f"🌟 **Punto di Forza:** {data['best_moment']}")
+
+                with tab3:
+                    st.text_area("Log Chat", hist_txt, height=300)
 
             except Exception as e:
-                st.error(f"Errore nel parsing dell'analisi. Riprova. Dettaglio: {e}")
-                st.write("Raw response:", res_judge)
+                st.error("Errore analisi JSON. Riprova.")
