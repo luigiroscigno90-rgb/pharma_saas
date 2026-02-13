@@ -1,4 +1,4 @@
 streamlit
-groq
+google-generativeai
+pandas
 edge-tts
-nest_asyncio
