@@ -8,8 +8,10 @@ import base64
 import asyncio
 import edge_tts
 import plotly.graph_objects as go
-import plotly.express as px # Nuovo per i grafici a barre
+import plotly.express as px
 import hashlib
+from streamlit_mic_recorder import mic_recorder # NUOVO: Libreria per il microfono
+import io # NUOVO: Per gestire i file audio in memoria
 
 # --- 1. CONFIGURAZIONE & STILE ---
 st.set_page_config(page_title="PharmaFlow AI Suite", page_icon="🏥", layout="wide")
@@ -22,13 +24,15 @@ st.markdown("""
     h1, h2, h3 {color: #2c3e50;}
     /* Tabella Admin più leggibile */
     .dataframe {font-size: 14px !important;}
+    /* Stile bottone microfono */
+    button[kind="secondary"] {border-radius: 50px; border: 1px solid #ddd; height: 3rem;}
     </style>
 """, unsafe_allow_html=True)
 
 # --- 2. AUTH SYSTEM (Password Hashing) ---
 DB_FILE = "users_db.json"
 KPI_FILE = "kpi_db.csv"
-ADMIN_PASS = "admin123" # <--- PASSWORD DEL TITOLARE
+ADMIN_PASS = "admin123"
 
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
@@ -77,6 +81,22 @@ def get_ai_response(messages, temp=0.7, json_mode=False):
         return completion.choices[0].message.content
     except Exception as e:
         return f"Errore AI: {e}"
+
+# NUOVO: Funzione per trascrivere audio con Groq Whisper
+def transcribe_audio(audio_bytes):
+    try:
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "audio.wav" 
+        transcription = client.audio.transcriptions.create(
+            file=(audio_file.name, audio_file.read()),
+            model="whisper-large-v3",
+            response_format="text",
+            language="it"
+        )
+        return transcription
+    except Exception as e:
+        st.error(f"Errore Trascrizione: {e}")
+        return None
 
 # --- 4. DATA & SCENARIOS ---
 SCENARIOS = {
@@ -172,9 +192,9 @@ def render_admin_dashboard():
     fig_line = px.line(emp_df, x=emp_df.index, y='Score', markers=True, title=f"Trend Miglioramento: {selected_emp}")
     st.plotly_chart(fig_line, use_container_width=True)
     
-    # Ultimi Feedback negativi (per capire dove sbaglia)
+    # Ultimi Feedback negativi
     st.write("🛑 **Ultimi Errori Rilevati:**")
-    st.table(emp_df[['Scenario', 'Score']].tail(5)) # Qui si potrebbe salvare anche il 'mistake' nel CSV per mostrarlo
+    st.table(emp_df[['Scenario', 'Score']].tail(5))
 
 # --- 7. SIDEBAR LOGIC ---
 if "logged_in" not in st.session_state:
@@ -209,9 +229,9 @@ with st.sidebar:
 # CASO A: ADMIN MODE ATTIVA
 if admin_mode:
     render_admin_dashboard()
-    st.stop() # Ferma il resto dell'app
+    st.stop() 
 
-# CASO B: LOGIN SCREEN (Se non loggato)
+# CASO B: LOGIN SCREEN
 if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["🔑 Accedi", "📝 Registra Farmacista"])
     with tab1:
@@ -231,7 +251,7 @@ if not st.session_state.logged_in:
                 else: st.error("User esiste già")
     st.stop()
 
-# CASO C: PHARMACIST TRAINING MODE (Se loggato e non admin)
+# CASO C: PHARMACIST TRAINING MODE
 sel_scenario = st.sidebar.selectbox("Training:", list(SCENARIOS.keys()))
 hard = st.sidebar.toggle("🔥 Hard Mode")
 if st.sidebar.button("Reset Chat"): st.session_state.messages = []; st.rerun()
@@ -250,20 +270,49 @@ if st.button("💡 Suggerimento"):
     h = get_ai_response([{"role":"system","content":f"Tutor per: {curr['obiettivo']}. Suggerisci frase breve."},{"role":"user","content":hist}])
     st.info(f"Tip: {h}")
 
-# Chat Flow
-u_in = st.chat_input("Scrivi...")
-if u_in:
-    st.session_state.messages.append({"role": "user", "content": u_in})
-    with st.chat_message("user"): st.write(u_in)
+# --- INPUT AREA: VOCE O TESTO (MODIFICATO) ---
+st.divider()
+col_mic, col_text = st.columns([1, 8])
+
+final_input = None
+
+with col_mic:
+    # Componente Microfono
+    audio_data = mic_recorder(
+        start_prompt="🎤",
+        stop_prompt="⏹️",
+        key='recorder',
+        format="wav",
+        use_container_width=True
+    )
+
+with col_text:
+    text_input = st.chat_input("Scrivi qui la tua risposta...")
+
+# LOGICA DI GESTIONE INPUT
+if audio_data:
+    with st.spinner("Trascrizione vocale..."):
+        text_from_audio = transcribe_audio(audio_data['bytes'])
+        if text_from_audio:
+            final_input = text_from_audio
+elif text_input:
+    final_input = text_input
+
+# --- ESECUZIONE CHAT ---
+if final_input:
+    st.session_state.messages.append({"role": "user", "content": final_input})
+    with st.chat_message("user"): st.write(final_input)
+    
     with st.spinner("..."):
         sys = curr['sys_prompt'] + (" Sii scontroso." if hard else "")
         ai_msg = get_ai_response([{"role":"system","content":sys}] + st.session_state.messages)
         asyncio.run(text_to_speech(ai_msg, curr['voice']))
+    
     st.session_state.messages.append({"role": "assistant", "content": ai_msg})
     with st.chat_message("assistant"): st.write(ai_msg); autoplay_audio("temp_audio.mp3")
 
 # Evaluation
-if len(st.session_state.messages)>2 and st.button("🏁 Valuta"):
+if len(st.session_state.messages)>2 and st.button("🏁 Valuta", type="primary", use_container_width=True):
     with st.spinner("Analisi..."):
         hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
         prompt = f"Analisi {sel_scenario}. JSON: {{'score_empatia':1-10, 'score_tecnica':1-10, 'score_chiusura':1-10, 'score_ascolto':1-10, 'score_obiezioni':1-10, 'totale':0-100, 'revenue':euro, 'feedback_main':'txt', 'mistake':'txt', 'correction':'txt'}}\nCHAT:\n{hist}"
