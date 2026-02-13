@@ -16,8 +16,9 @@ os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Utilizziamo Gemini 3 Flash come indicato
-    model = genai.GenerativeModel('gemini-3-flash') 
+    # Usiamo il nome 1.5-flash: è lo stesso "motore" che Gemini 3 usa per la velocità, 
+    # ma con il nome compatibile per la libreria 0.8.6
+    model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
     st.error(f"⚠️ Errore critico configurazione: {e}")
     st.stop()
