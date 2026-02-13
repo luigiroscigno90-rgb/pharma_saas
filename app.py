@@ -8,22 +8,46 @@ import base64
 import asyncio
 import edge_tts
 
-# --- 1. CONFIGURAZIONE MOTORE ---
-st.set_page_config(page_title="PharmaFlow AI Pro", page_icon="💊", layout="wide")
+# --- 1. CONFIGURAZIONE DINAMICA ---
+st.set_page_config(page_title="PharmaFlow AI", page_icon="💊", layout="wide")
 
-# Forza l'uso dell'endpoint stabile
-os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
-
-try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Utilizzo del modello stabilizzato per la versione 0.8.6
-    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash') 
-except Exception as e:
-    st.error(f"⚠️ Errore configurazione: {e}")
+# Funzione che TROVA il modello invece di indovinarlo
+def get_best_model():
+    try:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        
+        # Chiediamo a Google: "Cosa posso usare?"
+        modelli_disponibili = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                modelli_disponibili.append(m.name)
+        
+        # Cerchiamo il migliore in ordine di priorità
+        # 1. Cerchiamo Flash (veloce ed economico)
+        for m in modelli_disponibili:
+            if 'flash' in m.lower():
+                return genai.GenerativeModel(m)
+        
+        # 2. Se non c'è Flash, cerchiamo Pro
+        for m in modelli_disponibili:
+            if 'pro' in m.lower() and 'vision' not in m.lower():
+                return genai.GenerativeModel(m)
+                
+        # 3. Se va male, prendiamo il primo della lista (spesso 'gemini-pro')
+        if modelli_disponibili:
+            return genai.GenerativeModel(modelli_disponibili[0])
+            
+    except Exception as e:
+        st.error(f"Errore connessione Google: {e}")
+        st.stop()
+    
+    st.error("Nessun modello compatibile trovato nella tua Chiave API.")
     st.stop()
 
-# --- 2. FUNZIONI DI SISTEMA ---
+# Inizializza il modello trovato
+model = get_best_model()
 
+# --- 2. STORAGE ---
 def registra_simulazione(nome, scenario, punteggio, margine):
     file_nome = "storico_performance.csv"
     nuova_riga = {
@@ -31,7 +55,7 @@ def registra_simulazione(nome, scenario, punteggio, margine):
         "Farmacista": nome,
         "Scenario": scenario,
         "Punteggio": punteggio,
-        "Margine_Potenziale": margine
+        "Margine": margine
     }
     try:
         df = pd.read_csv(file_nome)
@@ -44,129 +68,98 @@ async def generate_audio(text):
     communicate = edge_tts.Communicate(text, "it-IT-ElsaNeural")
     await communicate.save("response.mp3")
 
-# --- 3. LOGIN SYSTEM ---
-
+# --- 3. LOGIN ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-    if st.session_state.password_correct:
-        return True
+    if st.session_state.password_correct: return True
 
-    st.title("🛡️ PharmaFlow AI Pro - Accesso Riservato")
-    with st.form("login_form"):
-        nome_utente = st.text_input("Identificativo Professionista:")
-        password = st.text_input("Password di Accesso:", type="password")
-        submit = st.form_submit_button("Sblocca Sistema")
-        if submit:
-            if password == st.secrets["APP_PASSWORD"] and nome_utente.strip() != "":
-                st.session_state.password_correct = True
-                st.session_state.user_name = nome_utente.strip()
-                st.rerun()
-            else:
-                st.error("Credenziali non valide.")
+    st.title("🛡️ PharmaFlow AI")
+    pwd = st.text_input("Password:", type="password")
+    user = st.text_input("Nome:")
+    if st.button("Entra"):
+        if pwd == st.secrets["APP_PASSWORD"] and user:
+            st.session_state.password_correct = True
+            st.session_state.user_name = user
+            st.rerun()
     return False
 
-if not check_password():
-    st.stop()
+if not check_password(): st.stop()
 
-# --- 4. DATASET SCENARI ---
-
+# --- 4. SCENARI ---
 SCENARIOS = {
-    "Dolore Ginocchio 🦵": {
-        "persona": "Maria, 65 anni, diffidente.",
-        "obiettivo_vendita": "Protocollo: Crema Antinfiammatoria + Ciclo Collagene.",
-        "prompt_cliente": "Sei Maria. Hai male al ginocchio. Accetti il collagene solo se ti spiegano che rigenera la cartilagine."
+    "Ginocchio 🦵": {
+        "prompt": "Sei Maria, 65 anni. Hai male al ginocchio. Sei diffidente. Accetti il collagene solo se ti spiegano che rigenera la cartilagine.",
+        "kpi": "Vendere Crema + Collagene"
     },
-    "Tosse Secca 😷": {
-        "persona": "Luca, 30 anni, fumatore.",
-        "obiettivo_vendita": "Protocollo: Sciroppo Sedativo + Spray Gola Protettivo.",
-        "prompt_cliente": "Sei Luca. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola irritata."
+    "Tosse 😷": {
+        "prompt": "Sei Luca, 30 anni, fumatore. Hai fretta. Accetti lo spray solo se ti dicono che protegge la gola.",
+        "kpi": "Vendere Sciroppo + Spray"
     }
 }
 
-# --- 5. INTERFACCIA ---
+# --- 5. CHAT ---
+st.sidebar.title(f"Dr. {st.session_state.user_name}")
+scelta = st.sidebar.selectbox("Scenario:", list(SCENARIOS.keys()))
+dati_scenario = SCENARIOS[scelta]
 
-st.sidebar.title(f"👨‍⚕️ Dr. {st.session_state.user_name}")
-scenario_name = st.sidebar.selectbox("Caso Clinico:", list(SCENARIOS.keys()))
-current_scenario = SCENARIOS[scenario_name]
-
-if st.sidebar.button("🔄 Reset Simulazione"):
+if st.sidebar.button("Reset"):
     st.session_state.messages = []
     st.rerun()
 
-st.title(f"Simulazione: {scenario_name}")
+st.title(scelta)
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if "messages" not in st.session_state: st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]): st.write(m["content"])
 
-# --- 6. CHAT LOGIC ---
-
-user_input = st.chat_input("Digita il tuo consiglio professionale...")
+user_input = st.chat_input("Scrivi qui...")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.write(user_input)
+    with st.chat_message("user"): st.write(user_input)
 
-    with st.spinner("Il cliente risponde..."):
+    with st.spinner("..."):
         try:
-            full_history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            prompt_engine = f"{current_scenario['prompt_cliente']}\nRispondi brevemente.\nSTORIA:\n{full_history}"
+            # Costruiamo il prompt completo (metodo infallibile)
+            storia = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+            full_prompt = f"{dati_scenario['prompt']}\nRispondi brevemente.\nSTORIA:\n{storia}"
             
-            response = model.generate_content(prompt_engine)
-            ai_response = response.text
+            # Chiamata diretta
+            response = model.generate_content(full_prompt)
+            ai_text = response.text
 
-            asyncio.run(generate_audio(ai_response))
+            # Audio
+            asyncio.run(generate_audio(ai_text))
             with open("response.mp3", "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
                 st.markdown(f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
-            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            st.session_state.messages.append({"role": "assistant", "content": ai_text})
             st.rerun()
         except Exception as e:
-            st.error(f"Errore tecnico: {e}")
+            st.error(f"Errore AI: {e}")
 
-# --- 7. IL GIUDICE ---
+# --- 6. ANALISI ---
+if st.button("🏁 VALUTA"):
+    with st.spinner("Analisi..."):
+        storia = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+        prompt = f"Analizza vendita: {dati_scenario['kpi']}.\nJSON: {{'score': 0-100, 'margine': 0-30, 'feedback': '...'}}\n{storia}"
+        try:
+            res = model.generate_content(prompt)
+            clean_json = res.text.replace('```json', '').replace('```', '').strip()
+            data = json.loads(clean_json)
+            st.metric("Voto", f"{data['score']}/100")
+            st.metric("Margine", f"€ {data['margine']}")
+            st.info(data['feedback'])
+            registra_simulazione(st.session_state.user_name, scelta, data['score'], data['margine'])
+        except:
+            st.error("Errore analisi")
 
-if len(st.session_state.messages) > 1:
-    st.divider()
-    if st.button("🏁 ANALIZZA PERFORMANCE"):
-        with st.spinner("Valutazione in corso..."):
-            chat_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
-            
-            judge_prompt = f"""
-            Analizza la vendita. Scenario: {scenario_name}.
-            Restituisci SOLO un JSON:
-            {{ "score": 0-100, "margine_euro": 5-30, "feedback": "...", "consiglio": "..." }}
-            \nTRASCRIZIONE:\n{chat_text}
-            """
-            
-            try:
-                res_ai = model.generate_content(judge_prompt)
-                json_clean = res_ai.text.replace('```json', '').replace('```', '').strip()
-                res = json.loads(json_clean)
-                
-                st.header("📊 Verdetto Strategico")
-                st.metric("Punteggio", f"{res['score']}/100")
-                st.metric("Margine Stimato", f"€ {res['margine_euro']}")
-                st.info(f"**Feedback:** {res['feedback']}")
-                
-                registra_simulazione(st.session_state.user_name, scenario_name, res['score'], res['margine_euro'])
-            except:
-                st.error("Errore nell'analisi automatica.")
-
-# --- 8. DASHBOARD ---
-
-st.sidebar.divider()
-if st.sidebar.checkbox("📈 Dashboard Admin"):
-    st.title("Business Intelligence")
+# --- 7. DASHBOARD ---
+if st.sidebar.checkbox("Dashboard"):
     try:
         df = pd.read_csv("storico_performance.csv")
-        st.metric("Margine Totale", f"€ {df['Margine_Potenziale'].sum()}")
-        st.dataframe(df.sort_values(by="Data", ascending=False))
-    except:
-        st.info("Nessun dato registrato.")
+        st.dataframe(df)
+    except: st.write("No dati")
