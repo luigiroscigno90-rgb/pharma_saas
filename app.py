@@ -8,67 +8,61 @@ import base64
 import asyncio
 import edge_tts
 import plotly.graph_objects as go
-import hashlib # Per criptare le password
+import plotly.express as px # Nuovo per i grafici a barre
+import hashlib
 
 # --- 1. CONFIGURAZIONE & STILE ---
-st.set_page_config(page_title="PharmaFlow AI Team", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="PharmaFlow AI Suite", page_icon="🏥", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp {background-color: #f0f2f6;}
-    div[data-testid="stSidebar"] {background-color: #1a252f; color: white;}
-    .stChatInput {border-radius: 20px;}
-    .stButton button {border-radius: 8px; font-weight: 600;}
-    /* Tab System pulito */
-    .stTabs [data-baseweb="tab-list"] {gap: 10px;}
-    .stTabs [data-baseweb="tab"] {height: 50px; white-space: pre-wrap; background-color: white; border-radius: 5px;}
-    .stTabs [aria-selected="true"] {background-color: #e8f0fe; color: #1a73e8;}
+    .stApp {background-color: #f4f6f9;}
+    div[data-testid="stSidebar"] {background-color: #2c3e50; color: white;}
+    .stMetric {background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
+    h1, h2, h3 {color: #2c3e50;}
+    /* Tabella Admin più leggibile */
+    .dataframe {font-size: 14px !important;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SISTEMA DI AUTENTICAZIONE (AUTH) ---
+# --- 2. AUTH SYSTEM (Password Hashing) ---
 DB_FILE = "users_db.json"
+KPI_FILE = "kpi_db.csv"
+ADMIN_PASS = "admin123" # <--- PASSWORD DEL TITOLARE
 
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def check_hashes(password, hashed_text):
-    if make_hashes(password) == hashed_text:
-        return hashed_text
-    return False
+    return make_hashes(password) == hashed_text
 
 def load_users():
-    if not os.path.exists(DB_FILE):
-        return {}
-    with open(DB_FILE, "r") as f:
-        return json.load(f)
+    if not os.path.exists(DB_FILE): return {}
+    with open(DB_FILE, "r") as f: return json.load(f)
 
 def save_user(username, password, name, gender):
     users = load_users()
-    if username in users:
-        return False # Utente esiste già
+    if username in users: return False
     users[username] = {
         "password": make_hashes(password),
-        "name": name,
-        "gender": gender, # 'M' o 'F'
+        "name": name, 
+        "gender": gender,
         "avatar": "👨‍⚕️" if gender == "Uomo" else "👩‍⚕️"
     }
-    with open(DB_FILE, "w") as f:
-        json.dump(users, f)
+    with open(DB_FILE, "w") as f: json.dump(users, f)
     return True
 
 def login_user(username, password):
     users = load_users()
-    if username in users:
-        if check_hashes(password, users[username]['password']):
-            return users[username]
+    if username in users and check_hashes(password, users[username]['password']):
+        return users[username]
     return None
 
 # --- 3. MOTORE AI (GROQ) ---
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except:
-    st.error("⚠️ Manca la GROQ_API_KEY nei secrets!")
+    st.error("⚠️ GROQ_API_KEY mancante!")
     st.stop()
 
 def get_ai_response(messages, temp=0.7, json_mode=False):
@@ -84,29 +78,25 @@ def get_ai_response(messages, temp=0.7, json_mode=False):
     except Exception as e:
         return f"Errore AI: {e}"
 
-# --- 4. DATABASE SCENARI ---
+# --- 4. DATA & SCENARIOS ---
 SCENARIOS = {
     "Dolore Articolare": {
-        "voice": "it-IT-ElsaNeural",
-        "persona": "Maria, 68 anni.",
+        "voice": "it-IT-ElsaNeural", "persona": "Maria, 68 anni.", 
         "obiettivo": "Vendere: Crema FANS + Collagene.",
         "sys_prompt": "Sei Maria, 68 anni. Diffidente. Hai male al ginocchio. Vuoi solo la crema. Accetti il collagene SOLO se il farmacista ti spiega che la crema toglie il dolore oggi, ma il collagene ripara la cartilagine per il futuro. Rispondi in max 20 parole."
     },
     "Tosse Fumatore": {
-        "voice": "it-IT-DiegoNeural",
-        "persona": "Luca, 35 anni.",
+        "voice": "it-IT-DiegoNeural", "persona": "Luca, 35 anni.", 
         "obiettivo": "Vendere: Sciroppo + Spray Gola.",
         "sys_prompt": "Sei Luca, 35 anni, fumatore. Hai fretta. Accetti lo spray SOLO se ti dicono che crea una barriera protettiva contro il fumo. Sii sbrigativo. Rispondi in max 15 parole."
     },
     "Insonnia Stress": {
-        "voice": "it-IT-ElsaNeural",
-        "persona": "Giulia, 42 anni.",
+        "voice": "it-IT-ElsaNeural", "persona": "Giulia, 42 anni.", 
         "obiettivo": "Vendere: Melatonina + Magnesio.",
         "sys_prompt": "Sei Giulia, manager stressata. Vuoi farmaci forti. Accetti integratori SOLO se ti spiegano l'azione rilassante sul sistema nervoso. Sii scettica."
     },
      "Reflusso Gastrico": {
-        "voice": "it-IT-DiegoNeural",
-        "persona": "Marco, 50 anni.",
+        "voice": "it-IT-DiegoNeural", "persona": "Marco, 50 anni.", 
         "obiettivo": "Vendere: Antiacido + Probiotici.",
         "sys_prompt": "Sei Marco. Mangi male. Vuoi solo tamponare il bruciore. Compri i probiotici solo se ti spiegano che riequilibrano la digestione."
     }
@@ -133,157 +123,163 @@ def plot_radar(values):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), showlegend=False, margin=dict(t=20, b=20, l=40, r=40))
     return fig
 
-# --- 6. GESTIONE STATO E LOGIN ---
+# --- 6. DASHBOARD TITOLARE (ADMIN) ---
+def render_admin_dashboard():
+    st.title("📊 PharmaBoss Dashboard")
+    st.markdown("Monitoraggio performance e ROI della formazione.")
+    
+    if not os.path.exists(KPI_FILE):
+        st.warning("Nessun dato registrato. Fai fare la prima simulazione ai tuoi dipendenti!")
+        return
+
+    df = pd.read_csv(KPI_FILE)
+    
+    # 1. KPI GENERALI
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Fatturato Potenziale", f"€ {df['Revenue'].sum()}")
+    col2.metric("Media Voto Team", f"{int(df['Score'].mean())}/100")
+    col3.metric("Simulazioni Totali", len(df))
+    col4.metric("Farmacisti Attivi", df['User'].nunique())
+    
+    st.divider()
+    
+    # 2. CLASSIFICA (LEADERBOARD)
+    c1, c2 = st.columns([2, 1])
+    
+    with c1:
+        st.subheader("🏆 Top Performer")
+        leaderboard = df.groupby('User').agg({'Score': 'mean', 'Revenue': 'sum', 'Scenario': 'count'}).reset_index()
+        leaderboard.columns = ['Farmacista', 'Voto Medio', 'Fatturato Totale', 'N. Sessioni']
+        leaderboard = leaderboard.sort_values(by='Fatturato Totale', ascending=False)
+        st.dataframe(leaderboard, use_container_width=True, hide_index=True)
+        
+    with c2:
+        st.subheader("📉 Aree Critiche")
+        weakness = df.groupby('Scenario')['Score'].mean().sort_values()
+        fig_bar = px.bar(weakness, x='Score', y=weakness.index, orientation='h', 
+                         color='Score', color_continuous_scale='RdYlGn', title="Media Voto per Caso")
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    st.divider()
+
+    # 3. ANALISI SINGOLA (DRILL DOWN)
+    st.subheader("🔎 Analisi Singolo Dipendente")
+    selected_emp = st.selectbox("Seleziona Farmacista:", df['User'].unique())
+    
+    emp_df = df[df['User'] == selected_emp]
+    
+    # Grafico Andamento nel Tempo
+    fig_line = px.line(emp_df, x=emp_df.index, y='Score', markers=True, title=f"Trend Miglioramento: {selected_emp}")
+    st.plotly_chart(fig_line, use_container_width=True)
+    
+    # Ultimi Feedback negativi (per capire dove sbaglia)
+    st.write("🛑 **Ultimi Errori Rilevati:**")
+    st.table(emp_df[['Scenario', 'Score']].tail(5)) # Qui si potrebbe salvare anche il 'mistake' nel CSV per mostrarlo
+
+# --- 7. SIDEBAR LOGIC ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_info = {}
 
-# --- SCHERMATA LOGIN / REGISTRAZIONE ---
-if not st.session_state.logged_in:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🏥 PharmaFlow Team Access")
-        st.write("Accedi al portale di formazione continua.")
-        
-        tab_login, tab_register = st.tabs(["🔑 Accedi", "📝 Registrati"])
-        
-        with tab_login:
-            with st.form("login_form"):
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                submit_login = st.form_submit_button("Entra")
-                
-                if submit_login:
-                    user_data = login_user(username, password)
-                    if user_data:
-                        st.session_state.logged_in = True
-                        st.session_state.user_info = user_data
-                        st.success("Login effettuato!")
-                        st.rerun()
-                    else:
-                        st.error("Username o password errati.")
-        
-        with tab_register:
-            with st.form("reg_form"):
-                new_user = st.text_input("Scegli un Username")
-                new_pass = st.text_input("Scegli una Password", type="password")
-                full_name = st.text_input("Nome e Cognome (es. Dr. Mario Rossi)")
-                gender = st.selectbox("Sesso (per Avatar)", ["Uomo", "Donna"])
-                submit_reg = st.form_submit_button("Crea Account")
-                
-                if submit_reg:
-                    if new_user and new_pass and full_name:
-                        if save_user(new_user, new_pass, full_name, gender):
-                            st.success("Account creato! Ora puoi accedere.")
-                        else:
-                            st.error("Username già in uso.")
-                    else:
-                        st.warning("Compila tutti i campi.")
-    st.stop() # Ferma l'esecuzione se non loggato
-
-# --- 7. SIDEBAR (LOGGATO) ---
-user = st.session_state.user_info
-
 with st.sidebar:
-    # Avatar Dinamico e Nome
-    st.title(f"{user['avatar']} PharmaFlow")
-    st.write(f"**{user['name']}**")
+    st.title("PharmaFlow")
     
-    if st.button("🚪 Logout", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.user_info = {}
-        st.rerun()
-        
+    # LOGIN/LOGOUT
+    if st.session_state.logged_in:
+        user = st.session_state.user_info
+        st.write(f"**{user['avatar']} {user['name']}**")
+        if st.button("Logout"):
+            st.session_state.logged_in = False
+            st.rerun()
+    
     st.divider()
     
-    selected_scenario = st.selectbox("Seleziona Scenario:", list(SCENARIOS.keys()))
-    hard_mode = st.toggle("🔥 Hard Mode", value=False)
-    
-    if st.button("🗑️ Reset Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
+    # ADMIN TOGGLE
+    admin_mode = False
+    if st.checkbox("🔐 Area Titolare"):
+        pwd = st.text_input("Master Password", type="password")
+        if pwd == ADMIN_PASS:
+            admin_mode = True
+            st.success("Accesso Admin Garantito")
+        elif pwd:
+            st.error("Password Errata")
 
-# --- 8. MAIN APP LOGIC ---
-current_data = SCENARIOS[selected_scenario]
-st.header(f"Simulazione: {selected_scenario}")
-st.markdown(f"**Paziente:** {current_data['persona']} | **Obiettivo:** {current_data['obiettivo']}")
+# --- 8. ROUTING ---
+
+# CASO A: ADMIN MODE ATTIVA
+if admin_mode:
+    render_admin_dashboard()
+    st.stop() # Ferma il resto dell'app
+
+# CASO B: LOGIN SCREEN (Se non loggato)
+if not st.session_state.logged_in:
+    tab1, tab2 = st.tabs(["🔑 Accedi", "📝 Registra Farmacista"])
+    with tab1:
+        with st.form("login"):
+            u = st.text_input("User"); p = st.text_input("Pass", type="password")
+            if st.form_submit_button("Entra"):
+                data = login_user(u, p)
+                if data: 
+                    st.session_state.logged_in = True; st.session_state.user_info = data; st.rerun()
+                else: st.error("Errore login")
+    with tab2:
+        with st.form("reg"):
+            nu = st.text_input("Nuovo User"); np = st.text_input("Nuova Pass", type="password")
+            fn = st.text_input("Nome Completo"); ge = st.selectbox("Sesso", ["Uomo", "Donna"])
+            if st.form_submit_button("Crea"):
+                if save_user(nu, np, fn, ge): st.success("Creato! Vai su Accedi."); 
+                else: st.error("User esiste già")
+    st.stop()
+
+# CASO C: PHARMACIST TRAINING MODE (Se loggato e non admin)
+sel_scenario = st.sidebar.selectbox("Training:", list(SCENARIOS.keys()))
+hard = st.sidebar.toggle("🔥 Hard Mode")
+if st.sidebar.button("Reset Chat"): st.session_state.messages = []; st.rerun()
+
+curr = SCENARIOS[sel_scenario]
+st.header(f"Simulazione: {sel_scenario}")
+st.markdown(f"**Obiettivo:** {curr['obiettivo']}")
 
 if "messages" not in st.session_state: st.session_state.messages = []
+for m in st.session_state.messages: 
+    with st.chat_message(m["role"]): st.write(m["content"])
 
-# Mostra Chat
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]): st.write(msg["content"])
+# Tutor
+if st.button("💡 Suggerimento"):
+    hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+    h = get_ai_response([{"role":"system","content":f"Tutor per: {curr['obiettivo']}. Suggerisci frase breve."},{"role":"user","content":hist}])
+    st.info(f"Tip: {h}")
 
-# Tutor Hint
-col_hint, col_space = st.columns([1, 4])
-with col_hint:
-    if st.button("💡 Suggerimento"):
-        with st.spinner("Thinking..."):
-            hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            hint_prompt = [{"role": "system", "content": f"Sei un tutor. Obiettivo: {current_data['obiettivo']}. Suggerisci una frase breve per il farmacista."}, {"role": "user", "content": hist}]
-            hint = get_ai_response(hint_prompt)
-            st.info(f"Prova a dire: {hint}")
+# Chat Flow
+u_in = st.chat_input("Scrivi...")
+if u_in:
+    st.session_state.messages.append({"role": "user", "content": u_in})
+    with st.chat_message("user"): st.write(u_in)
+    with st.spinner("..."):
+        sys = curr['sys_prompt'] + (" Sii scontroso." if hard else "")
+        ai_msg = get_ai_response([{"role":"system","content":sys}] + st.session_state.messages)
+        asyncio.run(text_to_speech(ai_msg, curr['voice']))
+    st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+    with st.chat_message("assistant"): st.write(ai_msg); autoplay_audio("temp_audio.mp3")
 
-# Input Utente
-user_input = st.chat_input("Scrivi la tua risposta...")
-
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"): st.write(user_input)
-    
-    with st.spinner("Il paziente risponde..."):
-        sys_prompt = current_data['sys_prompt']
-        if hard_mode: sys_prompt += " Sii scontroso e polemico sui prezzi."
-        
-        msgs = [{"role": "system", "content": sys_prompt}] + st.session_state.messages
-        ai_reply = get_ai_response(msgs)
-        asyncio.run(text_to_speech(ai_reply, current_data['voice']))
-
-    st.session_state.messages.append({"role": "assistant", "content": ai_reply})
-    with st.chat_message("assistant"):
-        st.write(ai_reply)
-        autoplay_audio("temp_audio.mp3")
-
-# Analisi Finale
-if len(st.session_state.messages) > 2:
-    st.divider()
-    if st.button("🏁 TERMINA E VALUTA", type="primary", use_container_width=True):
-        with st.spinner("Generazione Report per il Titolare..."):
-            hist_txt = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            judge_prompt = f"""
-            Analizza vendita. SCENARIO: {selected_scenario}. OBIETTIVO: {current_data['obiettivo']}.
-            JSON ONLY: {{
-                "score_empatia": (1-10), "score_tecnica": (1-10), "score_chiusura": (1-10),
-                "score_ascolto": (1-10), "score_obiezioni": (1-10), "totale": (0-100),
-                "revenue": (stima euro), "feedback_main": "breve", "mistake": "breve", "correction": "breve"
-            }}
-            CHAT: {hist_txt}
-            """
-            res_json = get_ai_response([{"role": "user", "content": judge_prompt}], json_mode=True)
+# Evaluation
+if len(st.session_state.messages)>2 and st.button("🏁 Valuta"):
+    with st.spinner("Analisi..."):
+        hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+        prompt = f"Analisi {sel_scenario}. JSON: {{'score_empatia':1-10, 'score_tecnica':1-10, 'score_chiusura':1-10, 'score_ascolto':1-10, 'score_obiezioni':1-10, 'totale':0-100, 'revenue':euro, 'feedback_main':'txt', 'mistake':'txt', 'correction':'txt'}}\nCHAT:\n{hist}"
+        res = get_ai_response([{"role":"user","content":prompt}], json_mode=True)
+        try:
+            d = json.loads(res)
+            st.balloons()
+            t1, t2 = st.tabs(["Performance", "Dettagli"])
+            with t1: 
+                c1,c2=st.columns(2)
+                c1.plotly_chart(plot_radar([d['score_empatia'],d['score_tecnica'],d['score_chiusura'],d['score_ascolto'],d['score_obiezioni']]))
+                c2.metric("Voto", f"{d['totale']}/100"); c2.metric("Fatturato", f"€ {d['revenue']}")
+            with t2: st.error(d['mistake']); st.success(d['correction'])
             
-            try:
-                data = json.loads(res_json)
-                st.balloons()
-                
-                tab1, tab2 = st.tabs(["📊 Performance", "📝 Dettagli"])
-                with tab1:
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        vals = [data['score_empatia'], data['score_tecnica'], data['score_chiusura'], data['score_ascolto'], data['score_obiezioni']]
-                        st.plotly_chart(plot_radar(vals), use_container_width=True)
-                    with c2:
-                        st.metric("Voto Finale", f"{data['totale']}/100")
-                        st.metric("Fatturato", f"€ {data['revenue']}")
-                        st.info(data['feedback_main'])
-                
-                with tab2:
-                    st.error(f"Errore: {data['mistake']}")
-                    st.success(f"Correzione: {data['correction']}")
-                
-                # Salvataggio con Nome Utente REALE
-                file = "kpi_db.csv"
-                new_row = {"Date": datetime.now(), "User": user['name'], "Scenario": selected_scenario, "Score": data['totale'], "Revenue": data['revenue']}
-                try: pd.read_csv(file)._append(new_row, ignore_index=True).to_csv(file, index=False)
-                except: pd.DataFrame([new_row]).to_csv(file, index=False)
-
-            except: st.error("Errore report.")
+            # Save KPI
+            row = {"Date":datetime.now().strftime("%Y-%m-%d %H:%M"), "User": st.session_state.user_info['name'], "Scenario": sel_scenario, "Score": d['totale'], "Revenue": d['revenue']}
+            try: pd.read_csv(KPI_FILE)._append(row, ignore_index=True).to_csv(KPI_FILE, index=False)
+            except: pd.DataFrame([row]).to_csv(KPI_FILE, index=False)
+        except: st.error("Errore report")
